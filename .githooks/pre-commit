@@ -1,0 +1,3 @@
+#!/bin/sh
+# Runs the test suite before every commit (enabled with: git config core.hooksPath .githooks)
+npm test --silent || { echo "Tests failed: commit aborted."; exit 1; }

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F6F0E8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1E1915" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="WordDrill">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>WordDrill</title>
+<style>
+  /* Warm evening paper with an amber accent, like the old TickTick notes */
+  :root {
+    --paper: #F6F0E8; --surface: #FFFDFA; --ink: #2A221B; --muted: #7A6A5B; --rule: #E2D7CA;
+    --accent: #B05F17; --on-accent: #FFFFFF; --quote: #C98A4B; --error: #B3402F; --ok: #3E7D2E;
+    --tint: rgba(176, 95, 23, .08);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #1E1915; --surface: #28211C; --ink: #F1E6DA; --muted: #A8978A; --rule: #3B322A;
+      --accent: #F0A35E; --on-accent: #23170C; --quote: #C98A4B; --error: #E0705E; --ok: #86C86F;
+      --tint: rgba(240, 163, 94, .10);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Armenian", "Noto Sans", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); overflow-x: clip; }
+  [hidden] { display: none !important; }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button {
+    border: 1px solid var(--rule); background: var(--surface); border-radius: 10px; padding: 6px 12px;
+    cursor: pointer; min-height: 36px; touch-action: manipulation;
+  }
+  button:hover { border-color: var(--muted); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  button.danger { color: var(--error); }
+  button.icon { min-width: 36px; padding: 6px 8px; }
+  button.icon.on { background: var(--tint); }
+  button.link { border: 0; background: none; color: var(--accent); font-weight: 600; padding: 4px 8px; min-height: 0; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  header.top {
+    position: sticky; top: 0; z-index: 5; background: var(--paper);
+    padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+    border-bottom: 1px solid var(--rule);
+  }
+  .top-inner { max-width: 760px; margin: 0 auto; }
+  .titlebar { display: flex; align-items: center; gap: 12px; padding-top: 8px; }
+  .titlebar h1 { font-size: 20px; margin: 0; color: var(--accent); }
+  #sync { flex: 1; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  nav { display: flex; gap: 4px; padding: 6px 0 8px; }
+  nav button { border: 0; background: none; color: var(--muted); font-weight: 600; padding: 6px 10px; position: relative; }
+  nav button.on { color: var(--ink); background: var(--tint); }
+  #checkBadge { position: absolute; top: 4px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+  .date { color: var(--muted); margin: 14px 0 0; font-size: 15px; }
+  .sec { margin: 18px 0 8px; }
+  .sec h2 { font-size: 19px; margin: 0 0 8px; color: var(--accent); display: flex; align-items: baseline; gap: 8px; }
+  .count { font-size: 14px; color: var(--muted); font-weight: 400; }
+  .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 10px 14px; margin: 0 0 10px; }
+  .md p { margin: 0 0 8px; }
+  .md > :last-child { margin-bottom: 0; }
+  .md blockquote { margin: 0 0 8px; padding: 0 0 0 12px; border-left: 2px solid var(--quote); color: var(--muted); }
+  .md blockquote p { margin: 0 0 4px; }
+  .md ul, .md ol { margin: 0 0 8px; padding-left: 22px; }
+  .md strong { font-weight: 700; }
+  .md.editable { cursor: text; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+  .actions .more { display: inline-flex; gap: 8px; }
+  .actions .more .danger { margin-left: 8px; }
+  button.add { width: 100%; border-style: dashed; color: var(--muted); background: none; }
+
+  .editor { background: var(--surface); border: 1px solid var(--accent); border-radius: 12px; padding: 8px; margin: 0 0 10px; }
+  .toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+  .tool { min-width: 38px; padding: 4px 8px; }
+  .tool.b { font-weight: 800; }
+  .tool.i { font-style: italic; font-family: Georgia, serif; }
+  .editor textarea {
+    display: block; width: 100%; min-height: 96px; resize: none; overflow: hidden; border: 0; outline: none;
+    background: none; padding: 4px 6px; font-size: 16px; line-height: 1.5;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+  .reminder, .done-box {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+    margin: 28px 0 8px; padding: 12px 14px; border-radius: 12px; background: var(--tint); border: 1px solid var(--accent);
+  }
+  .done-box.done { border-color: var(--rule); background: none; color: var(--ok); }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0 4px; }
+  .bar label { color: var(--muted); }
+  select, input[type=search], #codeInput {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 6px 10px; min-height: 36px; font-size: 16px;
+  }
+  input[type=search] { flex: 1; min-width: 160px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .empty { color: var(--muted); margin: 20px 0; }
+  .note { color: var(--muted); font-size: 14px; }
+
+  #login { max-width: 480px; margin: 48px auto; }
+  #login h2 { color: var(--accent); }
+  #login details { margin-top: 24px; }
+  #login summary { cursor: pointer; color: var(--muted); }
+  #login ol { padding-left: 20px; }
+  #codeInput { width: 100%; margin: 8px 0; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translate(-50%, 140%);
+    max-width: min(92vw, 560px); background: var(--ink); color: var(--paper); padding: 10px 14px; border-radius: 12px;
+    display: flex; gap: 8px; align-items: center; transition: transform .2s; z-index: 10; font-size: 15px;
+  }
+  #toast.show { transform: translate(-50%, 0); }
+  #toast.err { background: var(--error); color: #fff; }
+  #toast .link { color: var(--paper); text-decoration: underline; }
+</style>
+</head>
+<body>
+<section id="login" hidden>
+  <main>
+    <h2>Connect Dropbox</h2>
+    <p>WordDrill keeps your cards as Markdown files in Dropbox → Apps → WordDrill.</p>
+    <button id="loginRedirect" class="primary" type="button">Connect Dropbox</button>
+    <details id="codeBox">
+      <summary>Using the Home Screen app on iPhone? Connect with a code</summary>
+      <ol>
+        <li>Tap “Get a code”, allow access, and copy the code Dropbox shows.</li>
+        <li>Come back here and paste it below.</li>
+      </ol>
+      <button id="loginCode" type="button">Get a code</button>
+      <input id="codeInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Code from Dropbox" aria-label="Code from Dropbox">
+      <button id="codeSubmit" class="primary" type="button">Connect</button>
+    </details>
+  </main>
+</section>
+<div id="app" hidden>
+  <header class="top">
+    <div class="top-inner">
+      <div class="titlebar">
+        <h1>WordDrill</h1>
+        <span id="sync" role="status"></span>
+        <button type="button" class="icon" data-tab="settings" title="Settings" aria-label="Settings">⚙</button>
+      </div>
+      <nav>
+        <button type="button" data-tab="today">Today</button>
+        <button type="button" data-tab="check">Weekly check<span id="checkBadge" hidden></span></button>
+        <button type="button" data-tab="archive">Archive</button>
+      </nav>
+    </div>
+  </header>
+  <main id="view"></main>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
