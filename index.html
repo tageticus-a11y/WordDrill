@@ -17,14 +17,14 @@
   /* Night ink: deep navy paper with a cornflower accent (a cousin of Stanzas' blue-grey, without its amber) */
   :root {
     --paper: #EDF2F8; --surface: #FFFFFF; --ink: #17243A; --muted: #56677F; --rule: #D0DAE6;
-    --accent: #2A62B8; --on-accent: #FFFFFF; --quote: #8AAEE0; --error: #B3402F; --ok: #2E7D5B;
+    --accent: #2A62B8; --on-accent: #FFFFFF; --quote: #8AAEE0; --error: #B3402F; --ok: #2E7D5B; --alert: #D6382F; --alert-tint: rgba(214, 56, 47, .12);
     --tint: rgba(42, 98, 184, .08);
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --paper: #0F1724; --surface: #172235; --ink: #E2EAF4; --muted: #8C9DB4; --rule: #263550;
-      --accent: #7AAEF7; --on-accent: #0A1424; --quote: #4C78B8; --error: #E9806F; --ok: #74C99A;
+      --accent: #7AAEF7; --on-accent: #0A1424; --quote: #4C78B8; --error: #E9806F; --ok: #74C99A; --alert: #FF5A4E; --alert-tint: rgba(255, 90, 78, .16);
       --tint: rgba(122, 174, 247, .12);
       color-scheme: dark;
     }
@@ -60,15 +60,23 @@
   .titlebar { display: flex; align-items: center; gap: 12px; padding-top: 8px; }
   .titlebar h1 { font-size: 20px; margin: 0; color: var(--accent); }
   #sync { flex: 1; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  nav { display: flex; gap: 4px; padding: 6px 0 8px; }
-  nav button { border: 0; background: none; color: var(--muted); font-weight: 600; padding: 6px 10px; position: relative; }
+  nav { display: flex; gap: 2px; padding: 6px 0 8px; }
+  nav button { border: 0; background: none; color: var(--muted); font-weight: 600; padding: 6px 9px; position: relative; white-space: nowrap; }
+  @media (max-width: 400px) { nav button { padding: 6px 6px; font-size: 15px; } }
   nav button.on { color: var(--ink); background: var(--tint); }
-  #checkBadge { position: absolute; top: 4px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .badge { position: absolute; top: 4px; right: 1px; width: 8px; height: 8px; border-radius: 50%; background: var(--alert); }
+  /* A section of Prepared is empty: the tab pulses until it is filled */
+  nav button.blink { animation: blink 1.4s ease-in-out infinite; }
+  @keyframes blink { 50% { background: var(--alert-tint); color: var(--alert); } }
+  @media (prefers-reduced-motion: reduce) { nav button.blink { animation: none; background: var(--alert-tint); color: var(--alert); } }
 
   .date { color: var(--muted); margin: 14px 0 0; font-size: 15px; }
   .sec { margin: 18px 0 8px; }
   .sec h2 { font-size: 19px; margin: 0 0 8px; color: var(--accent); display: flex; align-items: baseline; gap: 8px; }
   .count { font-size: 14px; color: var(--muted); font-weight: 400; }
+  .low { font-size: 13px; color: var(--alert); font-weight: 600; }
+  .targets { display: flex; flex-wrap: wrap; gap: 16px; }
+  .targets label { display: flex; align-items: center; gap: 8px; }
   .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 10px 14px; margin: 0 0 10px; }
   .md p { margin: 0 0 8px; }
   .md > :last-child { margin-bottom: 0; }
@@ -155,7 +163,8 @@
       </div>
       <nav>
         <button type="button" data-tab="today">Today</button>
-        <button type="button" data-tab="check">Weekly check<span id="checkBadge" hidden></span></button>
+        <button type="button" data-tab="prepared">Prepared<span id="preparedBadge" class="badge" hidden></span></button>
+        <button type="button" data-tab="check">Weekly check<span id="checkBadge" class="badge" hidden></span></button>
         <button type="button" data-tab="archive">Archive</button>
       </nav>
     </div>

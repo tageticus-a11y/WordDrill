@@ -17,8 +17,14 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
 - **Flow and the queue are not built yet.** They come later, with a data transfer from TickTick. A card marked "Forgot" is deleted; its text goes to the clipboard so the user can paste it back into TickTick. The app keeps no copy.
 
 ## Workflow of the user
-- **Today:** three sections (Armenian, English, General). There are no daily targets; the user adds as many cards as they want.
-- **✓ Remembered** moves a card to today's weekday file.
+- **Today:** three sections (Armenian, English, General) with daily targets ("Cards per day": Armenian 2, English 2, General 1 by default). The targets are stored in `state.json` as `targets` and edited in Settings.
+- **Prepared** (`prepared.md`, the tab right of Today): the user prepares the next portion of cards each day. It works like Today: add, edit, up/down, delete.
+- **✓ Remembered** moves a card to today's weekday file, and the cards below it move up. If the section is then below its target, the **top** Prepared card of the same section joins Today at the bottom, with meta `started=date`. If Today had more cards than the target, nothing is refilled. See `rememberPlan` in `ops.js`; its Undo restores both cards.
+- **Moving cards by hand:** "→ Today" on a Prepared card pushes it into Today regardless of the target. "← Prepared" in Today's ⋯ menu puts a card back at the top of Prepared.
+- **Prepared warnings:**
+  - When a section of Prepared holds fewer cards than its target (`preparedShortage`), the Prepared tab gets a red dot and Today shows a "Prepared is running low" banner.
+  - When a section is completely empty, the Prepared tab also blinks.
+  - The Weekly check dot is red too.
 - **Weekly check:** on the same weekday a week later, each card that is due gets one of two answers:
   - **Still know** → archive.
   - **Forgot** → deleted, text copied to the clipboard.
@@ -26,10 +32,11 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
 
 ## Data layout in Dropbox (paths are lowercase, relative to the app folder)
 ```
-current.md                     cards being learned now
+current.md                     cards being learned now (Today)
+prepared.md                    next cards, top first (Prepared)
 week/1-mon.md … week/7-sun.md  remembered on that weekday; due when meta.moved < today (or no moved)
 archive/<section-key>/YYYY-MM.md  passed the check; one file per section per month (key: armenian/english/general)
-state.json                     { "weekCheckDone": "YYYY-MM-DD" }
+state.json                     { "weekCheckDone": "YYYY-MM-DD", "targets": { "Armenian": 2, ... } }
 ```
 Later releases add `flow/` and `queue/` next to these.
 
@@ -52,6 +59,7 @@ card body: free Markdown (bold, italic, > quotes, lists)
   - `added`: the date the card was created.
   - `moved`: the date it was remembered.
   - `archived`: the date it passed the check.
+  - `started`: the date it came from Prepared into Today.
   - Unknown keys are preserved.
 
 **Escaping:** a body line that would read as structure (`## `, `##`, `<!-- card`, `<!-- worddrill`) is saved with one extra leading `\`. Loading removes exactly one, so the escape can be reversed for any number of backslashes.
@@ -100,7 +108,7 @@ card body: free Markdown (bold, italic, > quotes, lists)
   - The app key is in `DROPBOX_APP_KEY`; it is public by design.
 - `demo.js`: `?demo` in the URL uses a fake Dropbox kept in localStorage (`demo.files`, `demo.data`). Use it for UI testing without touching real data.
 - `app.js`: the UI (tabs Today / Weekly check / Archive / Settings).
-  - **Every change** goes through `commit(op, message, undoOp)` → `engine.add` → render → `flush` after 600 ms.
+  - **Every change** goes through `commit(ops, message, undoOps)` (each argument is one op or a list) → `engine.add` → render → `flush` after 600 ms.
   - **Undo:** Delete, Remembered, Still know and Forgot show an Undo toast that builds the inverse op.
   - **Editing:** an open editor is stored as a draft (`wd.draft`) and survives reloads.
   - **Rendering:**

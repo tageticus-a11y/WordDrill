@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { parseDoc, serializeDoc, allCards } from '../js/format.js';
 import {
   applyOp, opTargets, addOp, editOp, deleteOp, restoreOp, orderOp, rememberOp, archiveOp, stateOp, applyStateOp,
-  CURRENT, ensureSection, sectionKey
+  CURRENT, ensureSection, sectionKey,
+  PREPARED, DEFAULT_TARGETS, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage
 } from '../js/ops.js';
 
 const cur = () => parseDoc('<!-- worddrill v1 -->\n\n## Armenian\n\n<!-- card id=a added=2026-11-01 -->\nalpha\n\n<!-- card id=b -->\nbeta\n\n## General\n\n<!-- card id=c -->\ngamma\n');
@@ -110,6 +111,56 @@ test('unknown op types leave files untouched', () => {
 test('state ops', () => {
   assert.deepEqual(applyStateOp(stateOp('weekCheckDone', '2026-11-12'), { other: 1 }), { other: 1, weekCheckDone: '2026-11-12' });
   assert.deepEqual(opTargets(stateOp('k', 1)), ['state.json']);
+});
+
+/* ---- Prepared list ---- */
+const prep = () => parseDoc('## Armenian\n<!-- card id=p1 -->\nnext one\n<!-- card id=p2 -->\nlater\n## General\n<!-- card id=pg -->\ng');
+const run = (ops, files) => ops.reduce((f, op) => apply(op, f), files);
+
+test('remember refills from the top of Prepared when Today drops below the target', () => {
+  const files = { [CURRENT]: cur(), [PREPARED]: prep() };
+  const card = allCards(files[CURRENT])[0];   // a — Armenian has a, b
+  const plan = rememberPlan(files[CURRENT], files[PREPARED], 'Armenian', card, '2026-11-12', 2);
+  assert.equal(plan.refill.id, 'p1');
+  const after = run(plan.ops, files);
+  assert.deepEqual(after[CURRENT].sections[0].cards.map(c => c.id), ['b', 'p1']);   // b moved up, p1 at the bottom
+  assert.equal(after[CURRENT].sections[0].cards[1].meta.started, '2026-11-12');
+  assert.deepEqual(ids(after[PREPARED]), ['p2', 'pg']);
+  assert.equal(total(after), total(files));
+  // Undo restores everything exactly
+  const back = run(plan.undo, after);
+  assert.deepEqual(back[CURRENT].sections[0].cards.map(c => c.id), ['a', 'b']);
+  assert.deepEqual(ids(back[PREPARED]), ['p1', 'p2', 'pg']);
+  assert.equal(total(back), total(files));
+});
+
+test('no refill when Today still meets the target, or Prepared is empty', () => {
+  const three = applyOp(addOp(CURRENT, 'Armenian', 'third', '2026-11-12'), CURRENT, cur());
+  const card = allCards(three)[0];
+  assert.equal(rememberPlan(three, prep(), 'Armenian', card, '2026-11-12', 2).refill, null);
+  const plan = rememberPlan(cur(), prep(), 'English', { id: 'zz' }, '2026-11-12', 2);
+  assert.equal(plan.refill, null);
+  assert.equal(plan.ops.length, 1);
+});
+
+test('push to Today and back to Prepared', () => {
+  const files = { [CURRENT]: cur(), [PREPARED]: prep() };
+  const p2 = allCards(files[PREPARED])[1];
+  let f = apply(toTodayOp('Armenian', p2, '2026-11-12'), files);
+  assert.deepEqual(f[CURRENT].sections[0].cards.map(c => c.id), ['a', 'b', 'p2']);
+  const a = allCards(f[CURRENT])[0];
+  f = apply(toPreparedOp('Armenian', a), f);
+  assert.deepEqual(f[PREPARED].sections[0].cards.map(c => c.id), ['a', 'p1']);
+  assert.equal(total(f), total(files));
+});
+
+test('daily targets and Prepared shortage', () => {
+  assert.deepEqual(targetsOf({}), DEFAULT_TARGETS);
+  assert.deepEqual(targetsOf({ targets: { English: 3, General: -1, Armenian: 'x' } }), { Armenian: 2, English: 3, General: 1 });
+  assert.deepEqual(preparedShortage(prep(), DEFAULT_TARGETS), [
+    { section: 'English', have: 0, need: 2 }, { section: 'General', have: 1, need: 1 }
+  ].filter(x => x.have < x.need));
+  assert.deepEqual(preparedShortage(prep(), { Armenian: 2, English: 0, General: 1 }), []);
 });
 
 test('sections', () => {

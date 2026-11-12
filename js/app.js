@@ -1,4 +1,4 @@
-// UI: Today (current cards), Weekly check, Archive, Settings. All changes go through the sync engine
+// UI: Today (current cards), Prepared (next cards), Weekly check, Archive, Settings. All changes go through the sync engine
 // as ops (see js/ops.js, js/sync.js); the UI never writes files itself.
 
 import { createDropbox, AuthError, REDIRECT_URI } from './dropbox.js';
@@ -7,13 +7,13 @@ import { createDemoDropbox } from './demo.js';
 import { allCards, normalizeBody } from './format.js';
 import { today, weekday, WEEKDAYS, WEEK_FILES, isDue, monthLabel } from './dates.js';
 import {
-  SECTIONS, CURRENT, STATE, addOp, editOp, deleteOp, restoreOp, orderOp, rememberOp, archiveOp, moveOp, stateOp,
-  findCard, sectionKey
+  SECTIONS, CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
+  findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage
 } from './ops.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix } from './markdown.js';
 
-const APP_VERSION = '2';   // shown in Settings; keep in step with CACHE in sw.js
-const CORE = [CURRENT, STATE, ...WEEK_FILES];
+const APP_VERSION = '3';   // shown in Settings; keep in step with CACHE in sw.js
+const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
 /* ============ Storage ============ */
@@ -95,11 +95,12 @@ async function sync() {
     updateStatus();
   } catch (e) { handleErr(e); }
 }
-function commit(op, message, undoOp) {
-  engine.add(op);
+// ops / undo: one op or a list; Undo in the toast commits the undo ops
+function commit(ops, message, undo) {
+  [ops].flat().forEach(op => engine.add(op));
   render();
   scheduleFlush();
-  if (message) toast(message, undoOp ? { undo: () => commit(undoOp) } : {});
+  if (message) toast(message, undo && [undo].flat().length ? { undo: () => commit(undo) } : {});
 }
 
 /* ============ Editing ============ */
@@ -190,35 +191,52 @@ const sectionsOf = doc => {
   return names.concat(extra).map(name => ({ name, cards: (doc.sections.find(s => s.name === name) || { cards: [] }).cards }));
 };
 
-/* ============ Today ============ */
-function renderToday() {
-  const date = today(), doc = engine.doc(CURRENT);
-  const out = [h('p', { class: 'date', text: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) })];
+/* ============ Today and Prepared ============ */
+// Both tabs show the same three sections; path is CURRENT or PREPARED
+function renderList(path) {
+  const date = today(), doc = engine.doc(path), isToday = path === CURRENT;
+  const targets = targetsOf(engine.state());
+  const out = [isToday
+    ? h('p', { class: 'date', text: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) })
+    : h('p', { class: 'date', text: 'Next cards, top first. ✓ Remembered in Today brings the top card of the same section into Today.' })];
   for (const sec of sectionsOf(doc)) {
     const ids = sec.cards.map(c => c.id);
+    const target = targets[sec.name] || 0;
     const cards = sec.cards.map((card, i) => {
-      const swap = j => { const n = ids.slice(); [n[i], n[j]] = [n[j], n[i]]; commit(orderOp(CURRENT, sec.name, n)); };
+      const swap = j => { const n = ids.slice(); [n[i], n[j]] = [n[j], n[i]]; commit(orderOp(path, sec.name, n)); };
       const more = menuFor === card.id;
-      const actions = [
-        btn('✓ Remembered', () => commit(rememberOp(sec.name, card, date), 'Moved to ' + weekday(date).name + '’s check.',
-          moveOp(weekday(date).file, CURRENT, sec.name, card, {}, i)), 'primary'),
-        btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')
-      ];
+      const main = isToday
+        ? btn('✓ Remembered', () => {
+          const plan = rememberPlan(doc, engine.doc(PREPARED), sec.name, card, date, target);
+          commit(plan.ops, 'Moved to ' + weekday(date).name + '’s check.' + (plan.refill ? ' Next card added from Prepared.' : ''), plan.undo);
+        }, 'primary')
+        : btn('→ Today', () => commit(toTodayOp(sec.name, card, date), 'Moved to Today.', moveOp(CURRENT, PREPARED, sec.name, card, {}, i)), 'primary');
+      const actions = [main, btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')];
       if (more) actions.push(h('span', { class: 'more' },
-        btn('↑', () => swap(i - 1), 'icon', 'Move up'), btn('↓', () => swap(i + 1), 'icon', 'Move down'),
-        btn('Delete', () => { menuFor = null; commit(deleteOp(CURRENT, card.id), 'Card deleted.', restoreOp(CURRENT, sec.name, card, i)); }, 'danger')));
-      if (more && i === 0) actions[2].children[0].disabled = true;
-      if (more && i === sec.cards.length - 1) actions[2].children[1].disabled = true;
-      return cardView(card, { path: CURRENT, section: sec.name, actions });
+        h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swap(i - 1) }, '↑'),
+        h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
+        isToday ? btn('← Prepared', () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Prepared.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); }) : null,
+        btn('Delete', () => { menuFor = null; commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)); }, 'danger')));
+      return cardView(card, { path, section: sec.name, actions });
     });
-    const adding = editing && editing.path === CURRENT && !editing.id && editing.section === sec.name;
+    const adding = editing && editing.path === path && !editing.id && editing.section === sec.name;
+    const low = !isToday && target > 0 && sec.cards.length < target;
     out.push(h('section', { class: 'sec' },
-      h('h2', {}, sec.name, h('span', { class: 'count', text: String(sec.cards.length) })),
+      h('h2', {}, sec.name,
+        h('span', { class: 'count', text: isToday ? sec.cards.length + ' / ' + target : String(sec.cards.length) }),
+        low ? h('span', { class: 'low', text: sec.cards.length ? 'less than a day’s ' + target : 'empty' }) : null),
       cards,
-      adding ? renderEditor() : btn('+ Add', () => startEdit(CURRENT, sec.name, null), 'add')));
+      adding ? renderEditor() : btn('+ Add', () => startEdit(path, sec.name, null), 'add')));
   }
-  out.push(reminder(date));
+  if (isToday) out.push(preparedReminder(), reminder(date));
   return out;
+}
+function preparedReminder() {
+  const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));
+  if (!short.length) return null;
+  return h('div', { class: 'reminder' },
+    h('span', { text: 'Prepared is running low: ' + short.map(x => x.section + ' ' + x.have + ' of ' + x.need).join(', ') + '.' }),
+    btn('Open Prepared', () => setTab('prepared'), 'primary'));
 }
 function reminder(date) {
   if (engine.state().weekCheckDone === date) return null;
@@ -308,7 +326,13 @@ function renderArchive() {
 /* ============ Settings ============ */
 function renderSettings() {
   const n = engine.pending();
+  const targets = targetsOf(engine.state());
   return [
+    h('section', { class: 'sec' }, h('h2', { text: 'Cards per day' }),
+      h('p', { class: 'note', text: 'How many cards each section keeps in Today. ✓ Remembered tops a section up from Prepared to this number; Prepared warns when it holds less than this.' }),
+      h('div', { class: 'targets' }, SECTIONS.map(({ name }) => h('label', {}, h('span', { text: name }),
+        h('select', { 'aria-label': name + ' cards per day', onchange: ev => commit(stateOp('targets', { ...targetsOf(engine.state()), [name]: +ev.target.value })) },
+          [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => h('option', { value: v, selected: v === targets[name] }, String(v)))))))),
     h('section', { class: 'sec' }, h('h2', { text: 'Dropbox' }),
       h('p', { text: 'Cards are Markdown files in Dropbox → Apps → WordDrill.' }),
       h('p', { class: 'note', text: n ? plural(n, 'change') + ' not saved to Dropbox yet.' : 'Everything is saved to Dropbox.' }),
@@ -335,11 +359,13 @@ function backgroundRender() {
 function render() {
   renderPending = false;
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  const view = { today: renderToday, check: renderCheck, archive: renderArchive, settings: renderSettings }[tab] || renderToday;
+  const view = { today: () => renderList(CURRENT), prepared: () => renderList(PREPARED), check: renderCheck, archive: renderArchive, settings: renderSettings }[tab] || (() => renderList(CURRENT));
   $('#view').replaceChildren(...[view()].flat().filter(Boolean));
-  const badge = $('#checkBadge');
-  const date = today();
-  badge.hidden = engine.state().weekCheckDone === date;
+  // Red dots: weekly check not done today / Prepared low. Blinking tab: a section of Prepared is empty.
+  $('#checkBadge').hidden = engine.state().weekCheckDone === today();
+  const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));
+  $('#preparedBadge').hidden = !short.length;
+  $('[data-tab=prepared]').classList.toggle('blink', short.some(x => x.have === 0));
 }
 
 /* ============ Start ============ */

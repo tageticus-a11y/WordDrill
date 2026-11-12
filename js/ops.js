@@ -41,6 +41,52 @@ export const archiveOp = (fromPath, section, card, date) =>
   moveOp(fromPath, archiveFile(sectionKey(section), date), section, card, { archived: date });
 export const stateOp = (key, value) => ({ type: 'state', key, value });
 
+/* ---- Prepared list and daily targets ---- */
+export const PREPARED = 'prepared.md';
+// Cards per section to keep in Today; stored in state.json as "targets", edited in Settings
+export const DEFAULT_TARGETS = { Armenian: 2, English: 2, General: 1 };
+export function targetsOf(state) {
+  const t = { ...DEFAULT_TARGETS };
+  const saved = state && state.targets;
+  if (saved && typeof saved === 'object')
+    for (const [k, v] of Object.entries(saved)) if (Number.isInteger(v) && v >= 0) t[k] = v;
+  return t;
+}
+const cardsIn = (doc, section) => (doc.sections.find(s => s.name === section) || { cards: [] }).cards;
+
+/** Prepared → bottom of Today (button, regardless of the target) */
+export const toTodayOp = (section, card, date) => moveOp(PREPARED, CURRENT, section, card, { started: date });
+/** Today → top of Prepared, so it is the next card in line again */
+export const toPreparedOp = (section, card) => moveOp(CURRENT, PREPARED, section, card, {}, 0);
+
+/**
+ * ✓ Remembered: the card goes to today's weekday file; cards below it move up. If that leaves the
+ * section below its target, the top Prepared card of the same section joins Today at the bottom.
+ * Returns { ops, undo, refill } — undo puts both cards back where they were.
+ */
+export function rememberPlan(current, prepared, section, card, date, target) {
+  const cards = cardsIn(current, section);
+  const index = cards.findIndex(c => c.id === card.id);
+  const ops = [rememberOp(section, card, date)];
+  const undo = [];
+  const next = cardsIn(prepared, section)[0];
+  const refill = next && cards.length - 1 < target ? next : null;
+  if (refill) {
+    ops.push(toTodayOp(section, refill, date));
+    undo.push(moveOp(CURRENT, PREPARED, section, refill, {}, 0));
+  }
+  undo.push(moveOp(weekFile(date), CURRENT, section, card, {}, index));
+  return { ops, undo, refill };
+}
+
+/** Sections whose Prepared list holds less than one day's portion: [{ section, have, need }] */
+export function preparedShortage(prepared, targets) {
+  return Object.entries(targets)
+    .filter(([, need]) => need > 0)
+    .map(([section, need]) => ({ section, have: cardsIn(prepared, section).length, need }))
+    .filter(x => x.have < x.need);
+}
+
 /** Files an op writes, in write order */
 export const opTargets = op =>
   op.type === 'move' ? [op.to, op.from] : op.type === 'state' ? [STATE] : [op.path];
