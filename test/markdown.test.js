@@ -21,6 +21,13 @@ test('blocks: paragraphs with line breaks, quotes, lists', () => {
   assert.equal(b[2].items.length, 2);
 });
 
+test('numbered items separated by quotes keep their numbers', () => {
+  const b = parseBlocks('1) first\n> example one\n2) second\n> example two\n3. third');
+  assert.deepEqual(b.map(x => x.t), ['ol', 'quote', 'ol', 'quote', 'ol']);
+  assert.deepEqual(b.filter(x => x.t === 'ol').map(x => x.start), [1, 2, 3]);
+  assert.equal(parseBlocks('5. a\n6. b')[0].start, 5);
+});
+
 test('plain text for search', () => {
   assert.equal(plainText('**ամուր**\n> *very* sturdy'), 'ամուր\nvery sturdy');
 });

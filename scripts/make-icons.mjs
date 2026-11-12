@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 
-const BG = [30, 25, 21], CARD2 = [92, 70, 52], CARD = [240, 163, 94], MARK = [35, 23, 12];
+const BG = [15, 23, 36], CARD2 = [52, 78, 120], CARD = [122, 174, 247], MARK = [10, 20, 36];
 
 function crc32(buf) {
   let c, crc = ~0;

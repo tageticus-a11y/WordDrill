@@ -12,7 +12,7 @@ import {
 } from './ops.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix } from './markdown.js';
 
-const APP_VERSION = '1';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '2';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 

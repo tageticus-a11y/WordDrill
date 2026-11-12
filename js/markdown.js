@@ -20,8 +20,10 @@ export function parseBlocks(md) {
       blocks.push({ t: 'quote', blocks: parseBlocks(inner.join('\n')) });
     } else if (UL_RE.test(line) || OL_RE.test(line)) {
       const re = UL_RE.test(line) ? UL_RE : OL_RE, items = [];
+      const start = parseInt(line.trim(), 10);
       while (i < lines.length && re.test(lines[i])) items.push(parseInline(lines[i++].match(re)[1]));
-      blocks.push({ t: re === UL_RE ? 'ul' : 'ol', items });
+      // A numbered list keeps its first number: "2)" after a quote is item 2, not a new 1
+      blocks.push(re === UL_RE ? { t: 'ul', items } : { t: 'ol', start, items });
     } else {
       const ls = [];
       while (i < lines.length && lines[i].trim() && !QUOTE_RE.test(lines[i]) && !UL_RE.test(lines[i]) && !OL_RE.test(lines[i]))
@@ -65,7 +67,9 @@ export function toDom(md, doc = document) {
   const blk = bs => bs.map(b => {
     if (b.t === 'p') return el('p', b.lines.flatMap((l, i) => (i ? [doc.createElement('br'), ...inl(l)] : inl(l))));
     if (b.t === 'quote') return el('blockquote', blk(b.blocks));
-    return el(b.t, b.items.map(it => el('li', inl(it))));
+    const list = el(b.t, b.items.map(it => el('li', inl(it))));
+    if (b.t === 'ol' && b.start !== 1) list.setAttribute('start', b.start);
+    return list;
   });
   const frag = doc.createDocumentFragment();
   blk(parseBlocks(md)).forEach(n => frag.append(n));
