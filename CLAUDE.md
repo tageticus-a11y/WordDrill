@@ -28,6 +28,7 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
 - **Weekly check:** on the same weekday a week later, each card that is due gets one of two answers:
   - **Still know** → archive.
   - **Forgot** → deleted, text copied to the clipboard.
+- **Wrong section:** "Move to…" in the ⋯ menu (Today, Prepared, Weekly check) moves a card to another section of the same file.
 - **Remembered by mistake:** in Weekly check, the note "N cards remembered today" has Show/Hide. The list it opens offers "← Back to Today" (`backToTodayOp` drops the `moved` date).
 - **Reminder:** a banner at the bottom of Today shows until "Mark weekly check done" is pressed for that day. The `weekCheckDone` date in `state.json` is synced across devices.
 
@@ -82,7 +83,7 @@ card body: free Markdown (bold, italic, > quotes, lists)
   - `isDue`.
   - `archiveFile(key, date)`.
 - `ops.js` (pure): the op builders and `applyOp(op, path, doc)`, which is **idempotent**.
-  - **Op types:** `add`, `edit`, `delete`, `order`, `move`, `state`.
+  - **Op types:** `add`, `edit`, `delete`, `order`, `move`, `section` (to another section of the same file), `state`.
   - **Moves:** `opTargets(op)` gives the files to write in order. A move writes **the target first, then the source**, so an interrupted move can duplicate a card but never lose it.
   - **Edit of a missing card:** an `edit` whose card is no longer in its file (moved or deleted elsewhere) re-adds the card, so the edited text is kept.
   - **Unknown op types** leave files untouched.
@@ -112,7 +113,10 @@ card body: free Markdown (bold, italic, > quotes, lists)
   - **Every change** goes through `commit(ops, message, undoOps)` (each argument is one op or a list) → `engine.add` → render → `flush` after 600 ms.
   - **Undo:** Delete, Remembered, Still know and Forgot show an Undo toast that builds the inverse op.
   - **Motion:** `leave(ev, fn)` slides a card out (200 ms) before its change is committed. After every commit, `render()` uses FLIP (`cardRects` / `playMoves`, keyed by `data-id`): the cards below glide up (380 ms) and new cards rise from below (650 ms). Motion is off with `prefers-reduced-motion`.
-  - **Editing:** an open editor is stored as a draft (`wd.draft`) and survives reloads.
+  - **Editing:**
+    - An open editor is stored as a draft (`wd.draft`) and survives reloads.
+    - **Autosave:** the open card is saved when the focus leaves it (`autoSave`). Triggers: a click outside the editor (a capture-phase listener on document saves first, then the click does its job), switching tabs, the app going to the background, and a textarea blur not followed by a click within 400 ms (keyboard focus moves; iOS taps without a click). Switching windows (`!document.hasFocus()`) doesn't save. Editor buttons use `mousedown` preventDefault so they keep the focus. Save stays as a button; an empty card is not autosaved.
+    - **Earlier versions:** `js/versions.js` keeps each card's earlier texts for this session only (sessionStorage `wd.versions`, at most 20 per card). The ↺ N button in the editor lists them and puts one back in the box. Nothing of this goes to Dropbox.
   - **Rendering:**
     - Renders caused by sync or a visibility change go through `backgroundRender`, which waits while the editor textarea has focus.
     - User actions always call `render()` directly. iOS buttons don't take focus, so deferring those would freeze the UI.

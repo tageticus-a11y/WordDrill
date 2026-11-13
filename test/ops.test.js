@@ -4,7 +4,7 @@ import { parseDoc, serializeDoc, allCards } from '../js/format.js';
 import {
   applyOp, opTargets, addOp, editOp, deleteOp, restoreOp, orderOp, rememberOp, archiveOp, stateOp, applyStateOp,
   CURRENT, ensureSection, sectionKey,
-  PREPARED, DEFAULT_TARGETS, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp
+  PREPARED, DEFAULT_TARGETS, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp
 } from '../js/ops.js';
 
 const cur = () => parseDoc('<!-- worddrill v1 -->\n\n## Armenian\n\n<!-- card id=a added=2026-11-01 -->\nalpha\n\n<!-- card id=b -->\nbeta\n\n## General\n\n<!-- card id=c -->\ngamma\n');
@@ -164,6 +164,18 @@ test('a card remembered by mistake goes back to Today without its moved date', (
   const back = f[CURRENT].sections[0].cards.find(c => c.id === card.id);
   assert.deepEqual(back.meta, { added: '2026-11-01' });
   assert.equal(total(f), total(files));
+});
+
+test('a card moves to another section of the same file, and back to its place', () => {
+  const base = cur();
+  const op = sectionOp(CURRENT, 'a', 'English');
+  const d = applyOp(op, CURRENT, base);
+  assert.deepEqual(d.sections.map(s => [s.name, s.cards.map(c => c.id)]), [['Armenian', ['b']], ['English', ['a']], ['General', ['c']]]);
+  assert.deepEqual(applyOp(op, CURRENT, d), d);   // idempotent
+  assert.equal(allCards(d).find(c => c.id === 'a').body, 'alpha');
+  const back = applyOp(sectionOp(CURRENT, 'a', 'Armenian', 0), CURRENT, d);
+  assert.deepEqual(back.sections[0].cards.map(c => c.id), ['a', 'b']);
+  assert.equal(applyOp(sectionOp(CURRENT, 'missing', 'English'), CURRENT, base).sections.length, 2);
 });
 
 test('daily targets and Prepared shortage', () => {

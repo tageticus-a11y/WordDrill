@@ -88,8 +88,10 @@
   .sec.later { opacity: .85; }
   .meta { font-size: 13px; color: var(--muted); margin-top: 6px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
-  .actions .more { display: inline-flex; gap: 8px; }
-  .actions .more .danger { margin-left: 8px; }
+  /* The ⋯ menu takes its own line and wraps on narrow phones */
+  .actions .more { display: flex; flex-wrap: wrap; gap: 8px; flex-basis: 100%; }
+  .actions .more button { white-space: nowrap; }
+  .actions .more .danger { margin-left: auto; }
   button.add { width: 100%; border-style: dashed; color: var(--muted); background: none; }
 
   .editor { background: var(--surface); border: 1px solid var(--accent); border-radius: 12px; padding: 8px; margin: 0 0 10px; }
@@ -101,6 +103,13 @@
     display: block; width: 100%; min-height: 96px; resize: none; overflow: hidden; border: 0; outline: none;
     background: none; padding: 4px 6px; font-size: 16px; line-height: 1.5;
   }
+  .tool.hist { margin-left: auto; color: var(--muted); }
+  .versions { border-top: 1px solid var(--rule); margin-top: 6px; padding-top: 6px; display: grid; gap: 4px; }
+  .versions .note { margin: 0 0 4px; }
+  .version { display: flex; gap: 10px; text-align: left; min-height: 0; padding: 6px 10px; }
+  .version .when { color: var(--muted); font-size: 14px; flex: none; }
+  .version .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  select.move-sec { min-height: 36px; padding: 4px 8px; font-size: 15px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 
   .reminder, .done-box {

@@ -40,6 +40,8 @@ export const rememberOp = (section, card, date) => moveOp(CURRENT, weekFile(date
 export const archiveOp = (fromPath, section, card, date) =>
   moveOp(fromPath, archiveFile(sectionKey(section), date), section, card, { archived: date });
 export const stateOp = (key, value) => ({ type: 'state', key, value });
+/** Moves a card to another section of the same file (at index; default: the end) */
+export const sectionOp = (path, id, section, index) => ({ type: 'section', path, id, section, index });
 
 /* ---- Prepared list and daily targets ---- */
 export const PREPARED = 'prepared.md';
@@ -149,6 +151,16 @@ export function applyOp(op, path, doc) {
         const pos = new Map(op.ids.map((id, i) => [id, i]));
         const known = s.cards.filter(c => pos.has(c.id)).sort((a, b) => pos.get(a.id) - pos.get(b.id));
         s.cards = known.concat(s.cards.filter(c => !pos.has(c.id)));
+      }
+      break;
+    }
+    case 'section': {
+      const f = findCard(d, op.id);
+      if (f && f.section.name !== op.section) {
+        f.section.cards.splice(f.index, 1);
+        const s = ensureSection(d, op.section);
+        if (op.index == null || op.index > s.cards.length) s.cards.push(f.card);
+        else s.cards.splice(Math.max(0, op.index), 0, f.card);
       }
       break;
     }

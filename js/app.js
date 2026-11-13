@@ -8,11 +8,12 @@ import { allCards, normalizeBody } from './format.js';
 import { today, weekday, WEEKDAYS, WEEK_FILES, isDue, monthLabel } from './dates.js';
 import {
   SECTIONS, CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
-  findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp
+  findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp
 } from './ops.js';
+import { createVersions } from './versions.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix } from './markdown.js';
 
-const APP_VERSION = '4';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '5';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -26,6 +27,11 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
 const DEMO = new URLSearchParams(location.search).has('demo');   // fake Dropbox in browser storage, for trying the UI
+// Earlier texts of cards for this session only (sessionStorage): a safety net for autosave
+const versions = createVersions({
+  get(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch (e) { return null; } },
+  set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+});
 const dbx = DEMO ? createDemoDropbox(store) : createDropbox(store);
 const engine = createEngine({ api: dbx.api, storage: store, key: DEMO ? 'demo.data' : 'wd.data' });
 
@@ -138,9 +144,7 @@ function saveDraft() { if (editing) store.set('wd.draft', editing); else store.d
 function startEdit(path, section, card, index) {
   if (editing) {
     if (editing.id === (card && card.id) && editing.path === path) return;
-    toast('Save or cancel the card you’re editing first.');
-    focusEditor();
-    return;
+    autoSave();
   }
   editing = { path, section, id: card ? card.id : null, index, text: card ? card.body : '' };
   saveDraft();
@@ -162,7 +166,22 @@ function saveEdit() {
   const f = findCard(engine.doc(e.path), e.id);
   const card = f ? f.card : { id: e.id, meta: {} };
   closeEditor();
-  if (!f || f.card.body !== text) commit(editOp(e.path, e.section, card, text));
+  if (!f || f.card.body !== text) {
+    if (f) versions.add(e.id, f.card.body);
+    commit(editOp(e.path, e.section, card, text));
+  }
+}
+// The open card is saved when the focus leaves it: a tap or click outside the editor, another tab,
+// leaving the app. Save stays as a button. An empty card is not saved (Delete removes cards).
+function autoSave() {
+  if (!editing) return;
+  if (!normalizeBody(editing.text)) {
+    const id = editing.id;
+    closeEditor();
+    if (id) toast('An empty card isn’t saved. To remove a card, use Delete.');
+    return;
+  }
+  saveEdit();
 }
 function renderEditor() {
   const e = editing;
@@ -180,17 +199,36 @@ function renderEditor() {
     else if (mod && ev.key.toLowerCase() === 'b') { ev.preventDefault(); wrap('**'); }
     else if (mod && ev.key.toLowerCase() === 'i') { ev.preventDefault(); wrap('*'); }
   });
-  t.addEventListener('blur', () => { if (renderPending) setTimeout(() => { if (renderPending && !editorFocused()) render(); }, 0); });
+  t.addEventListener('blur', () => {
+    if (renderPending) setTimeout(() => { if (renderPending && !editorFocused()) render(); }, 0);
+    // Focus moved elsewhere without a click (keyboard, or a tap on iOS that makes no click event).
+    // Clicks are handled earlier, in the document click listener. Switching windows is not leaving.
+    setTimeout(() => {
+      if (editing === e && !editorFocused() && document.hasFocus() && !(document.activeElement && document.activeElement.closest('.editor'))) autoSave();
+    }, 400);
+  });
   requestAnimationFrame(grow);
   // Toolbar buttons keep the focus (and the selection) in the text box
   const tool = (label, title, fn, cls) => h('button', { type: 'button', class: 'tool ' + (cls || ''), title, 'aria-label': title,
     onmousedown: ev => ev.preventDefault(), onclick: () => { fn(); t.focus(); } }, label);
+  const keep = (label, fn, cls) => h('button', { type: 'button', class: cls, onmousedown: ev => ev.preventDefault(), onclick: fn }, label);
+  // Earlier texts of this card from this session; picking one puts it in the text box
+  const earlier = e.id ? versions.list(e.id) : [];
+  const list = h('div', { class: 'versions', hidden: true },
+    h('p', { class: 'note', text: 'Earlier texts of this card from this session. Tap one to put it back in the box.' }),
+    earlier.map(v => keep([h('span', { class: 'when', text: new Date(v.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) }),
+      h('span', { class: 'what', text: plainText(v.text).split('\n').join(' · ') })], () => {
+      versions.add(e.id, e.text);
+      t.value = v.text; e.text = v.text; saveDraft(); grow(); t.focus();
+    }, 'version')));
   return h('div', { class: 'editor' },
     h('div', { class: 'toolbar' },
       tool('B', 'Bold (Ctrl+B)', () => wrap('**'), 'b'), tool('I', 'Italic (Ctrl+I)', () => wrap('*'), 'i'),
-      tool('❝', 'Quote', () => prefix('> ')), tool('•', 'List', () => prefix('- ')), tool('1.', 'Numbered list', () => prefix('1. '))),
+      tool('❝', 'Quote', () => prefix('> ')), tool('•', 'List', () => prefix('- ')), tool('1.', 'Numbered list', () => prefix('1. ')),
+      earlier.length ? tool('↺ ' + earlier.length, 'Earlier versions', () => { list.hidden = !list.hidden; }, 'hist') : null),
     t,
-    h('div', { class: 'row' }, btn('Save', saveEdit, 'primary'), btn('Cancel', cancelEdit)));
+    list,
+    h('div', { class: 'row' }, keep('Save', saveEdit, 'primary'), keep('Cancel', cancelEdit)));
 }
 function cancelEdit() {
   const e = editing;
@@ -202,6 +240,16 @@ function cancelEdit() {
 const editorFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea');
 
 /* ============ Cards ============ */
+// "Move to…" another section of the same file; Undo puts the card back in its place
+function sectionPicker(path, section, card, index) {
+  const others = SECTIONS.map(x => x.name).filter(n => n !== section);
+  return h('select', { class: 'move-sec', 'aria-label': 'Move to section', onchange: ev => {
+    const to = ev.target.value;
+    menuFor = null;
+    commit(sectionOp(path, card.id, to), 'Moved to ' + to + '.', sectionOp(path, card.id, section, index));
+  } }, h('option', { value: '', selected: true, disabled: true }, 'Move to…'), others.map(n => h('option', { value: n }, n)));
+}
+
 function cardView(card, { path, section, actions = [], meta, editable = true }) {
   if (editing && editing.path === path && editing.id === card.id) return renderEditor();
   const body = h('div', { class: 'md' + (editable ? ' editable' : '') });
@@ -245,6 +293,7 @@ function renderList(path) {
       if (more) actions.push(h('span', { class: 'more' },
         h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swap(i - 1) }, '↑'),
         h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
+        sectionPicker(path, sec.name, card, i),
         isToday ? btn('← Prepared', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Prepared.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null,
         btn('Delete', ev => leave(ev, () => { menuFor = null; commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)); }), 'danger')));
       return cardView(card, { path, section: sec.name, actions });
@@ -307,8 +356,10 @@ function renderCheck() {
               // Clipboard first, while still inside the tap (iOS allows it only there)
               if (navigator.clipboard) navigator.clipboard.writeText(card.body).catch(() => {});
               leave(ev, () => commit(deleteOp(day.file, card.id), 'Removed. The text is copied — paste it into TickTick.', restoreOp(day.file, sec.name, card, i)));
-            })
-          ]
+            }),
+            btn('⋯', () => { menuFor = menuFor === card.id ? null : card.id; render(); }, 'icon' + (menuFor === card.id ? ' on' : ''), 'More actions'),
+            menuFor === card.id ? h('span', { class: 'more' }, sectionPicker(day.file, sec.name, card, i)) : null
+          ].filter(Boolean)
         });
       })));
   }
@@ -394,6 +445,7 @@ function renderSettings() {
 
 /* ============ Rendering ============ */
 function setTab(t) {
+  autoSave();
   tab = t; store.set('wd.tab', t); menuFor = null;
   render();
   window.scrollTo(0, 0);
@@ -428,7 +480,12 @@ function wire() {
     try { await dbx.exchange($('#codeInput').value); start(); } catch (e) { toast(e.message, { error: true }); }
   });
   if (navigator.standalone) $('#codeBox').open = true;
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { backgroundRender(); sync(); } else flush(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { backgroundRender(); sync(); } else { autoSave(); flush(); } });
+  // A click anywhere outside the open editor saves it first; the click then does what it was for
+  // (its handlers still run, even though the page was redrawn).
+  document.addEventListener('click', ev => {
+    if (editing && !(ev.target.closest && ev.target.closest('.editor'))) autoSave();
+  }, true);
   window.addEventListener('online', sync);
   window.addEventListener('offline', () => updateStatus());
   let day = today();
