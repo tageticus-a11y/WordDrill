@@ -8,11 +8,11 @@ import { allCards, normalizeBody } from './format.js';
 import { today, weekday, WEEKDAYS, WEEK_FILES, isDue, monthLabel } from './dates.js';
 import {
   SECTIONS, CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
-  findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage
+  findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp
 } from './ops.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix } from './markdown.js';
 
-const APP_VERSION = '3';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '4';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -36,6 +36,8 @@ let archiveKey = SECTIONS[0].key, archiveMonth = null, archiveQuery = '';
 let editing = store.get('wd.draft');        // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
+let showLater = false;                      // Weekly check: list of cards remembered today is open
+let animateNext = false;                    // the next render slides cards to their new places
 
 /* ============ Small helpers ============ */
 function h(tag, attrs, ...kids) {
@@ -98,9 +100,37 @@ async function sync() {
 // ops / undo: one op or a list; Undo in the toast commits the undo ops
 function commit(ops, message, undo) {
   [ops].flat().forEach(op => engine.add(op));
+  animateNext = true;
   render();
   scheduleFlush();
   if (message) toast(message, undo && [undo].flat().length ? { undo: () => commit(undo) } : {});
+}
+
+/* ============ Motion ============ */
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+// The card slides out to the right, then the change is made (and the cards below move up)
+function leave(ev, fn) {
+  const el = ev && ev.currentTarget && ev.currentTarget.closest('.card');
+  if (!el || reducedMotion() || !el.animate) return fn();
+  el.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(48px)' }],
+    { duration: 200, easing: 'ease-in', fill: 'forwards' }).finished.then(fn, fn);
+}
+const cardRects = () => new Map([...document.querySelectorAll('#view .card[data-id]')].map(e => [e.dataset.id, e.getBoundingClientRect().top]));
+// FLIP: cards that moved glide from their old place; cards that just appeared rise from below
+function playMoves(before) {
+  for (const el of document.querySelectorAll('#view .card[data-id]')) {
+    if (!el.animate) return;
+    const old = before.get(el.dataset.id);
+    if (old != null) {
+      const dy = old - el.getBoundingClientRect().top;
+      if (Math.abs(dy) > 1) el.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }],
+        { duration: 380, easing: 'cubic-bezier(.2, .7, .3, 1)' });
+    } else {
+      el.animate([{ opacity: 0, transform: 'translateY(56px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 650, delay: 150, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'backwards' });
+    }
+  }
 }
 
 /* ============ Editing ============ */
@@ -181,7 +211,7 @@ function cardView(card, { path, section, actions = [], meta, editable = true }) 
     ev.preventDefault();
     startEdit(path, section, card);
   });
-  return h('article', { class: 'card' }, body,
+  return h('article', { class: 'card', 'data-id': card.id }, body,
     meta ? h('div', { class: 'meta', text: meta }) : null,
     actions.length ? h('div', { class: 'actions' }, actions) : null);
 }
@@ -206,17 +236,17 @@ function renderList(path) {
       const swap = j => { const n = ids.slice(); [n[i], n[j]] = [n[j], n[i]]; commit(orderOp(path, sec.name, n)); };
       const more = menuFor === card.id;
       const main = isToday
-        ? btn('✓ Remembered', () => {
-          const plan = rememberPlan(doc, engine.doc(PREPARED), sec.name, card, date, target);
+        ? btn('✓ Remembered', ev => leave(ev, () => {
+          const plan = rememberPlan(engine.doc(CURRENT), engine.doc(PREPARED), sec.name, card, date, target);
           commit(plan.ops, 'Moved to ' + weekday(date).name + '’s check.' + (plan.refill ? ' Next card added from Prepared.' : ''), plan.undo);
-        }, 'primary')
-        : btn('→ Today', () => commit(toTodayOp(sec.name, card, date), 'Moved to Today.', moveOp(CURRENT, PREPARED, sec.name, card, {}, i)), 'primary');
+        }), 'primary')
+        : btn('→ Today', ev => leave(ev, () => commit(toTodayOp(sec.name, card, date), 'Moved to Today.', moveOp(CURRENT, PREPARED, sec.name, card, {}, i))), 'primary');
       const actions = [main, btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')];
       if (more) actions.push(h('span', { class: 'more' },
         h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swap(i - 1) }, '↑'),
         h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
-        isToday ? btn('← Prepared', () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Prepared.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); }) : null,
-        btn('Delete', () => { menuFor = null; commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)); }, 'danger')));
+        isToday ? btn('← Prepared', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Prepared.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null,
+        btn('Delete', ev => leave(ev, () => { menuFor = null; commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)); }), 'danger')));
       return cardView(card, { path, section: sec.name, actions });
     });
     const adding = editing && editing.path === path && !editing.id && editing.section === sec.name;
@@ -269,20 +299,37 @@ function renderCheck() {
           path: day.file, section: sec.name,
           meta: card.meta.moved ? 'Remembered ' + shortDate(card.meta.moved) : null,
           actions: [
-            btn('✓ Still know', () => {
+            btn('✓ Still know', ev => leave(ev, () => {
               const op = archiveOp(day.file, sec.name, card, date);
               commit(op, 'Archived.', moveOp(op.to, day.file, sec.name, card, {}, i));
-            }, 'primary'),
-            btn('✗ Forgot', () => {
+            }), 'primary'),
+            btn('✗ Forgot', ev => {
+              // Clipboard first, while still inside the tap (iOS allows it only there)
               if (navigator.clipboard) navigator.clipboard.writeText(card.body).catch(() => {});
-              commit(deleteOp(day.file, card.id), 'Removed. The text is copied — paste it into TickTick.', restoreOp(day.file, sec.name, card, i));
+              leave(ev, () => commit(deleteOp(day.file, card.id), 'Removed. The text is copied — paste it into TickTick.', restoreOp(day.file, sec.name, card, i)));
             })
           ]
         });
       })));
   }
   if (!shown) out.push(h('p', { class: 'empty', text: 'Nothing to check for ' + day.name + '.' }));
-  if (later) out.push(h('p', { class: 'note', text: plural(later, 'card') + ' remembered today — they come up next ' + day.name + '.' }));
+  if (later) {
+    out.push(h('p', { class: 'note' }, plural(later, 'card') + ' remembered today — they come up next ' + day.name + '. ',
+      btn(showLater ? 'Hide' : 'Show', () => { showLater = !showLater; render(); }, 'link')));
+    // Remembered by mistake? Bring a card back to Today
+    if (showLater) for (const sec of sectionsOf(doc)) {
+      const notDue = sec.cards.filter(c => !isDue(c, date));
+      if (!notDue.length) continue;
+      out.push(h('section', { class: 'sec later' },
+        h('h2', {}, sec.name, h('span', { class: 'count', text: String(notDue.length) })),
+        notDue.map(card => {
+          const i = sec.cards.indexOf(card);
+          return cardView(card, { path: day.file, section: sec.name, meta: 'Remembered today',
+            actions: [btn('← Back to Today', ev => leave(ev, () =>
+              commit(backToTodayOp(day.file, sec.name, card), 'Back in Today.', moveOp(CURRENT, day.file, sec.name, card, {}, i))))] });
+        })));
+    }
+  }
   const done = engine.state().weekCheckDone === date;
   out.push(h('div', { class: 'done-box' + (done ? ' done' : '') }, done
     ? [h('span', { text: '✓ Weekly check done today.' }), btn('Undo', () => commit(stateOp('weekCheckDone', null)), 'link')]
@@ -358,9 +405,13 @@ function backgroundRender() {
 }
 function render() {
   renderPending = false;
+  const animate = animateNext && !reducedMotion();
+  animateNext = false;
+  const before = animate ? cardRects() : null;
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   const view = { today: () => renderList(CURRENT), prepared: () => renderList(PREPARED), check: renderCheck, archive: renderArchive, settings: renderSettings }[tab] || (() => renderList(CURRENT));
   $('#view').replaceChildren(...[view()].flat().filter(Boolean));
+  if (animate) playMoves(before);
   // Red dots: weekly check not done today / Prepared low. Blinking tab: a section of Prepared is empty.
   $('#checkBadge').hidden = engine.state().weekCheckDone === today();
   const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));

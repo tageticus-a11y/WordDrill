@@ -4,7 +4,7 @@ import { parseDoc, serializeDoc, allCards } from '../js/format.js';
 import {
   applyOp, opTargets, addOp, editOp, deleteOp, restoreOp, orderOp, rememberOp, archiveOp, stateOp, applyStateOp,
   CURRENT, ensureSection, sectionKey,
-  PREPARED, DEFAULT_TARGETS, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage
+  PREPARED, DEFAULT_TARGETS, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp
 } from '../js/ops.js';
 
 const cur = () => parseDoc('<!-- worddrill v1 -->\n\n## Armenian\n\n<!-- card id=a added=2026-11-01 -->\nalpha\n\n<!-- card id=b -->\nbeta\n\n## General\n\n<!-- card id=c -->\ngamma\n');
@@ -151,6 +151,18 @@ test('push to Today and back to Prepared', () => {
   const a = allCards(f[CURRENT])[0];
   f = apply(toPreparedOp('Armenian', a), f);
   assert.deepEqual(f[PREPARED].sections[0].cards.map(c => c.id), ['a', 'p1']);
+  assert.equal(total(f), total(files));
+});
+
+test('a card remembered by mistake goes back to Today without its moved date', () => {
+  const files = { [CURRENT]: cur() };
+  const card = allCards(files[CURRENT])[0];
+  let f = apply(rememberOp('Armenian', card, '2026-11-12'), files);
+  const inWeek = allCards(f['week/4-thu.md'])[0];
+  f = apply(backToTodayOp('week/4-thu.md', 'Armenian', inWeek), f);
+  assert.equal(allCards(f['week/4-thu.md']).length, 0);
+  const back = f[CURRENT].sections[0].cards.find(c => c.id === card.id);
+  assert.deepEqual(back.meta, { added: '2026-11-01' });
   assert.equal(total(f), total(files));
 });
 

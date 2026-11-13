@@ -23,11 +23,12 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
 - **Moving cards by hand:** "→ Today" on a Prepared card pushes it into Today regardless of the target. "← Prepared" in Today's ⋯ menu puts a card back at the top of Prepared.
 - **Prepared warnings:**
   - When a section of Prepared holds fewer cards than its target (`preparedShortage`), the Prepared tab gets a red dot and Today shows a "Prepared is running low" banner.
-  - When a section is completely empty, the Prepared tab also blinks.
+  - When a section is completely empty, the Prepared tab also blinks three times (when that happens or the app opens), not constantly.
   - The Weekly check dot is red too.
 - **Weekly check:** on the same weekday a week later, each card that is due gets one of two answers:
   - **Still know** → archive.
   - **Forgot** → deleted, text copied to the clipboard.
+- **Remembered by mistake:** in Weekly check, the note "N cards remembered today" has Show/Hide. The list it opens offers "← Back to Today" (`backToTodayOp` drops the `moved` date).
 - **Reminder:** a banner at the bottom of Today shows until "Mark weekly check done" is pressed for that day. The `weekCheckDone` date in `state.json` is synced across devices.
 
 ## Data layout in Dropbox (paths are lowercase, relative to the app folder)
@@ -110,6 +111,7 @@ card body: free Markdown (bold, italic, > quotes, lists)
 - `app.js`: the UI (tabs Today / Weekly check / Archive / Settings).
   - **Every change** goes through `commit(ops, message, undoOps)` (each argument is one op or a list) → `engine.add` → render → `flush` after 600 ms.
   - **Undo:** Delete, Remembered, Still know and Forgot show an Undo toast that builds the inverse op.
+  - **Motion:** `leave(ev, fn)` slides a card out (200 ms) before its change is committed. After every commit, `render()` uses FLIP (`cardRects` / `playMoves`, keyed by `data-id`): the cards below glide up (380 ms) and new cards rise from below (650 ms). Motion is off with `prefers-reduced-motion`.
   - **Editing:** an open editor is stored as a draft (`wd.draft`) and survives reloads.
   - **Rendering:**
     - Renders caused by sync or a visibility change go through `backgroundRender`, which waits while the editor textarea has focus.

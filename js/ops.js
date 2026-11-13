@@ -59,6 +59,13 @@ export const toTodayOp = (section, card, date) => moveOp(PREPARED, CURRENT, sect
 /** Today → top of Prepared, so it is the next card in line again */
 export const toPreparedOp = (section, card) => moveOp(CURRENT, PREPARED, section, card, {}, 0);
 
+/** A card remembered by mistake: weekday file → bottom of Today, without its `moved` date */
+export function backToTodayOp(fromPath, section, card) {
+  const meta = { ...card.meta };
+  delete meta.moved;
+  return moveOp(fromPath, CURRENT, section, { ...card, meta });
+}
+
 /**
  * ✓ Remembered: the card goes to today's weekday file; cards below it move up. If that leaves the
  * section below its target, the top Prepared card of the same section joins Today at the bottom.
