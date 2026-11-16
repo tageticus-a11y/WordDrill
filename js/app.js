@@ -14,7 +14,7 @@ import { createVersions } from './versions.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '8';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '9';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
