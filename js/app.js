@@ -11,9 +11,10 @@ import {
   findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp
 } from './ops.js';
 import { createVersions } from './versions.js';
+import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine } from './markdown.js';
 
-const APP_VERSION = '6';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '7';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -43,8 +44,20 @@ let editing = store.get('wd.draft');        // { path, section, id|null, index?,
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
 let showLater = false;
-const revealed = new Set();                 // Weekly check: cards whose answer is shown (collapsed by default)                      // Weekly check: list of cards remembered today is open
+const revealed = new Set();                 // Weekly check: cards whose answer is shown (collapsed by default)
 let animateNext = false;                    // the next render slides cards to their new places
+
+// Recall on Today: cards typed from memory (this browser only, for today) before Today's list is shown.
+// The list is hidden at the start of a session and again after a long break (LIST_HIDE_AFTER).
+let recall = recallFor(store.get('wd.recall'), today());
+let focusRecall = null;                     // typed card to focus after the next render
+const LIST_HIDE_AFTER = 30 * 60 * 1000;
+const session = {
+  get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) {} }
+};
+const listShown = () => session.get('wd.listShown') === today();
+const setListShown = on => session.set('wd.listShown', on ? today() : null);
 
 /* ============ Small helpers ============ */
 function h(tag, attrs, ...kids) {
@@ -202,7 +215,7 @@ function renderEditor() {
     else if (mod && ev.key.toLowerCase() === 'u') { ev.preventDefault(); wrap('~'); }
   });
   t.addEventListener('blur', () => {
-    if (renderPending) setTimeout(() => { if (renderPending && !editorFocused()) render(); }, 0);
+    if (renderPending) setTimeout(() => { if (renderPending && !typingFocused()) render(); }, 0);
     // Focus moved elsewhere without a click (keyboard, or a tap on iOS that makes no click event).
     // Clicks are handled earlier, in the document click listener. Switching windows is not leaving.
     setTimeout(() => {
@@ -242,6 +255,7 @@ function cancelEdit() {
   closeEditor();
 }
 const editorFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea');
+const typingFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea, .recall textarea, textarea.prompt');
 
 /* ============ Cards ============ */
 // "Move to…" another section of the same file; Undo puts the card back in its place
@@ -278,9 +292,17 @@ const sectionsOf = doc => {
 function renderList(path) {
   const date = today(), doc = engine.doc(path), isToday = path === CURRENT;
   const targets = targetsOf(engine.state());
+  if (isToday && !listShown()) return renderRecall(date, doc, targets);
   const out = [isToday
     ? h('p', { class: 'date', text: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) })
     : h('p', { class: 'date', text: 'Next cards, top first. ✓ Remembered in Today brings the top card of the same section into Today.' })];
+  if (isToday) {
+    const n = typedTexts(curRecall()).length;
+    out.push(h('div', { class: 'bar recall-bar' },
+      h('span', { class: 'note', text: n ? 'Typed from memory: ' + plural(n, 'card') + '.' : 'Nothing typed from memory today.' }),
+      n ? btn('Copy for AI check', copyCheck) : null,
+      btn('Hide and type again', typeAgain, 'link')));
+  }
   for (const sec of sectionsOf(doc)) {
     const ids = sec.cards.map(c => c.id);
     const target = targets[sec.name] || 0;
@@ -314,6 +336,86 @@ function renderList(path) {
   if (isToday) out.push(reminder(date), preparedReminder());
   return out;
 }
+/* ============ Recall ============ */
+function curRecall() { if (recall.date !== today()) recall = recallFor(null, today()); return recall; }
+const saveRecall = () => store.set('wd.recall', recall);
+const newRecallId = () => Math.random().toString(36).slice(2, 9);
+function showList() { setListShown(true); animateNext = true; render(); window.scrollTo(0, 0); }
+// Clears the typed cards (with Undo) and hides the list again
+function clearRecall(hide) {
+  const r = curRecall(), old = r.items.slice();
+  r.items = []; saveRecall();
+  if (hide) setListShown(false);
+  render();
+  if (typedTexts({ items: old }).length) toast('Typed cards cleared.', { undo: () => { curRecall().items = old; saveRecall(); render(); } });
+}
+const typeAgain = () => { clearRecall(true); window.scrollTo(0, 0); };
+function copyCheck() {
+  const text = buildCheckText(promptOf(engine.state()), typedTexts(curRecall()), sectionsOf(engine.doc(CURRENT)));
+  copyText(text).then(ok => toast(ok ? 'Copied: the prompt, your typed cards and today’s cards. Paste it into the AI chat.'
+    : 'Couldn’t copy to the clipboard.', ok ? {} : { error: true }));
+}
+// Clipboard: the API where allowed, else the old select-and-copy way
+function copyText(text) {
+  const old = () => {
+    const t = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });
+    t.value = text; document.body.append(t); t.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    t.remove();
+    return ok;
+  };
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(() => true, old);
+  return Promise.resolve(old());
+}
+function renderRecall(date, doc, targets) {
+  const r = curRecall();
+  if (!r.items.length) r.items.push({ id: newRecallId(), text: '' });   // always one box to type in
+  const n = typedTexts(r).length;
+  const addAfter = it => {
+    const n = { id: newRecallId(), text: '' };
+    r.items.splice(r.items.indexOf(it) + 1, 0, n);
+    saveRecall(); focusRecall = n.id; render();
+  };
+  const remove = it => {
+    const i = r.items.indexOf(it);
+    r.items.splice(i, 1); saveRecall();
+    if (r.items.length) focusRecall = r.items[Math.max(0, i - 1)].id;
+    render();
+  };
+  const box = (it, i) => {
+    // No spellcheck or autocorrect: the point is to see your own spelling
+    const t = h('textarea', { rows: 1, spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off',
+      placeholder: i ? 'Next card' : 'Type a card from memory', 'aria-label': 'Card ' + (i + 1), 'data-rid': it.id });
+    t.value = it.text;
+    const grow = () => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; };
+    t.addEventListener('input', () => { it.text = t.value; saveRecall(); grow(); });
+    t.addEventListener('keydown', ev => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); addAfter(it); }
+      else if (ev.key === 'Backspace' && !t.value && r.items.length > 1) { ev.preventDefault(); remove(it); }
+    });
+    t.addEventListener('blur', () => { if (renderPending) setTimeout(() => { if (renderPending && !typingFocused()) render(); }, 0); });
+    requestAnimationFrame(grow);
+    return h('div', { class: 'typed' }, h('span', { class: 'num', text: (i + 1) + '.' }), t,
+      btn('✕', () => remove(it), 'icon', 'Remove'));
+  };
+  const counts = sectionsOf(doc).filter(sec => sec.cards.length || targets[sec.name]).map(sec => sec.name + ' ' + sec.cards.length).join(' · ');
+  return [
+    h('p', { class: 'date', text: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) }),
+    h('section', { class: 'sec recall' },
+      h('h2', {}, 'Recall', h('span', { class: 'count', text: String(n) })),
+      h('p', { class: 'note', text: 'Type every card you remember, in any order, then show today’s cards. Ctrl+Enter starts the next card. Kept on this device only, for today.' }),
+      r.items.map(box),
+      btn('+ Next card', () => addAfter(r.items[r.items.length - 1]), 'add'),
+      h('div', { class: 'row' },
+        btn(n ? 'Show today’s cards' : 'Skip — show today’s cards', showList, 'primary'),
+        n ? btn('Copy for AI check', copyCheck) : null,
+        n ? btn('Clear', () => clearRecall(false), 'link') : null)),
+    h('p', { class: 'note hidden-list', text: 'Today’s cards are hidden: ' + (counts || 'none') + '.' }),
+    reminder(date), preparedReminder()
+  ];
+}
+
 function preparedReminder() {
   const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));
   if (!short.length) return null;
@@ -442,6 +544,7 @@ function renderSettings() {
       h('div', { class: 'targets' }, SECTIONS.map(({ name }) => h('label', {}, h('span', { text: name }),
         h('select', { 'aria-label': name + ' cards per day', onchange: ev => commit(stateOp('targets', { ...targetsOf(engine.state()), [name]: +ev.target.value })) },
           [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => h('option', { value: v, selected: v === targets[name] }, String(v)))))))),
+    promptSettings(),
     h('section', { class: 'sec' }, h('h2', { text: 'Dropbox' }),
       h('p', { text: 'Cards are Markdown files in Dropbox → Apps → WordDrill.' }),
       h('p', { class: 'note', text: n ? plural(n, 'change') + ' not saved to Dropbox yet.' : 'Everything is saved to Dropbox.' }),
@@ -454,6 +557,22 @@ function renderSettings() {
   ];
 }
 
+function promptSettings() {
+  const saved = engine.state().aiPrompt ?? null;
+  const t = h('textarea', { class: 'prompt', rows: 12, spellcheck: 'true', 'aria-label': 'AI check prompt' });
+  t.value = promptOf(engine.state());
+  const save = value => commit(stateOp('aiPrompt', value), value == null ? 'Prompt reset to the default.' : 'Prompt saved.', stateOp('aiPrompt', saved));
+  return h('section', { class: 'sec' }, h('h2', { text: 'AI check prompt' }),
+    h('p', { class: 'note', text: 'Copy for AI check on Today copies this text. {typed} is replaced with the cards you typed from memory and {cards} with today’s cards; without them both lists go at the end. Saved in Dropbox, so all your devices use it.' }),
+    t,
+    h('div', { class: 'row' },
+      btn('Save prompt', () => {
+        const v = t.value.trim();
+        save(!v || v === DEFAULT_CHECK_PROMPT.trim() ? null : t.value);
+      }, 'primary'),
+      saved != null ? btn('Reset to default', () => { if (confirm('Replace your prompt with the default one?')) save(null); }) : null));
+}
+
 /* ============ Rendering ============ */
 function setTab(t) {
   autoSave();
@@ -463,7 +582,7 @@ function setTab(t) {
 }
 // Changes from another device must not rebuild the page under the user's fingers while they type
 function backgroundRender() {
-  if (editorFocused()) { renderPending = true; return; }
+  if (typingFocused()) { renderPending = true; return; }
   render();
 }
 function render() {
@@ -475,6 +594,11 @@ function render() {
   const view = { today: () => renderList(CURRENT), prepared: () => renderList(PREPARED), check: renderCheck, archive: renderArchive, settings: renderSettings }[tab] || (() => renderList(CURRENT));
   $('#view').replaceChildren(...[view()].flat().filter(Boolean));
   if (animate) playMoves(before);
+  if (focusRecall) {
+    const t = document.querySelector('.recall textarea[data-rid="' + focusRecall + '"]');
+    focusRecall = null;
+    if (t) { t.focus(); t.scrollIntoView({ block: 'nearest' }); }
+  }
   // Red dots: cards to check today / Prepared low. Blinking tab: a section of Prepared is empty.
   $('#checkBadge').hidden = !dueToday(today());
   const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));
@@ -491,7 +615,14 @@ function wire() {
     try { await dbx.exchange($('#codeInput').value); start(); } catch (e) { toast(e.message, { error: true }); }
   });
   if (navigator.standalone) $('#codeBox').open = true;
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { backgroundRender(); sync(); } else { autoSave(); flush(); } });
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      // Back after a long break (say, from morning to midday): Today's list is hidden again for recall
+      if (hiddenAt && Date.now() - hiddenAt > LIST_HIDE_AFTER && !(editing && editing.path === CURRENT)) setListShown(false);
+      backgroundRender(); sync();
+    } else { hiddenAt = Date.now(); autoSave(); flush(); }
+  });
   // A click anywhere outside the open editor saves it first; the click then does what it was for
   // (its handlers still run, even though the page was redrawn).
   document.addEventListener('click', ev => {
@@ -503,6 +634,7 @@ function wire() {
   setInterval(() => { if (today() !== day) { day = today(); backgroundRender(); } }, 60000);
 }
 function start() {
+  if (editing && editing.path === CURRENT) setListShown(true);   // a card was being edited: keep the list open
   show('app');
   render();
   if (editing) focusEditor();
