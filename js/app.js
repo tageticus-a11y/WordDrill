@@ -11,9 +11,9 @@ import {
   findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp
 } from './ops.js';
 import { createVersions } from './versions.js';
-import { toDom, plainText, toggleWrap, toggleLinePrefix } from './markdown.js';
+import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine } from './markdown.js';
 
-const APP_VERSION = '5';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '6';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -42,7 +42,8 @@ let archiveKey = SECTIONS[0].key, archiveMonth = null, archiveQuery = '';
 let editing = store.get('wd.draft');        // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
-let showLater = false;                      // Weekly check: list of cards remembered today is open
+let showLater = false;
+const revealed = new Set();                 // Weekly check: cards whose answer is shown (collapsed by default)                      // Weekly check: list of cards remembered today is open
 let animateNext = false;                    // the next render slides cards to their new places
 
 /* ============ Small helpers ============ */
@@ -198,6 +199,7 @@ function renderEditor() {
     else if (ev.key === 'Escape') { ev.preventDefault(); cancelEdit(); }
     else if (mod && ev.key.toLowerCase() === 'b') { ev.preventDefault(); wrap('**'); }
     else if (mod && ev.key.toLowerCase() === 'i') { ev.preventDefault(); wrap('*'); }
+    else if (mod && ev.key.toLowerCase() === 'u') { ev.preventDefault(); wrap('~'); }
   });
   t.addEventListener('blur', () => {
     if (renderPending) setTimeout(() => { if (renderPending && !editorFocused()) render(); }, 0);
@@ -224,7 +226,9 @@ function renderEditor() {
   return h('div', { class: 'editor' },
     h('div', { class: 'toolbar' },
       tool('B', 'Bold (Ctrl+B)', () => wrap('**'), 'b'), tool('I', 'Italic (Ctrl+I)', () => wrap('*'), 'i'),
+      tool('U', 'Underline (Ctrl+U): ~text~', () => wrap('~'), 'u'),
       tool('❝', 'Quote', () => prefix('> ')), tool('•', 'List', () => prefix('- ')), tool('1.', 'Numbered list', () => prefix('1. ')),
+      tool('{ }', 'Box, e.g. for etymology', () => set(toggleFence(t.value, t.selectionStart, t.selectionEnd)), 'box'),
       earlier.length ? tool('↺ ' + earlier.length, 'Earlier versions', () => { list.hidden = !list.hidden; }, 'hist') : null),
     t,
     list,
@@ -307,7 +311,7 @@ function renderList(path) {
       cards,
       adding ? renderEditor() : btn('+ Add', () => startEdit(path, sec.name, null), 'add')));
   }
-  if (isToday) out.push(preparedReminder(), reminder(date));
+  if (isToday) out.push(reminder(date), preparedReminder());
   return out;
 }
 function preparedReminder() {
@@ -317,12 +321,13 @@ function preparedReminder() {
     h('span', { text: 'Prepared is running low: ' + short.map(x => x.section + ' ' + x.have + ' of ' + x.need).join(', ') + '.' }),
     btn('Open Prepared', () => setTab('prepared'), 'primary'));
 }
+// Cards remembered on this weekday in earlier weeks, waiting for today's check
+const dueToday = date => allCards(engine.doc(weekday(date).file)).filter(c => isDue(c, date)).length;
 function reminder(date) {
-  if (engine.state().weekCheckDone === date) return null;
-  const day = weekday(date);
-  const due = allCards(engine.doc(day.file)).filter(c => isDue(c, date)).length;
+  const due = dueToday(date);
+  if (!due) return null;
   return h('div', { class: 'reminder' },
-    h('span', { text: 'Weekly check for ' + day.name + ': ' + (due ? plural(due, 'card') + ' waiting.' : 'nothing to check.') + ' Not marked as done yet.' }),
+    h('span', { text: 'Weekly check for ' + weekday(date).name + ': ' + plural(due, 'card') + ' to check.' }),
     btn('Open weekly check', () => { checkDay = null; setTab('check'); }, 'primary'));
 }
 
@@ -344,6 +349,15 @@ function renderCheck() {
       h('h2', {}, sec.name, h('span', { class: 'count', text: String(due.length) })),
       due.map(card => {
         const i = sec.cards.indexOf(card);
+        // Collapsed first: only the first line, so the answer can't be peeked at
+        if (!revealed.has(card.id) && !(editing && editing.id === card.id)) {
+          const reveal = () => { revealed.add(card.id); render(); };
+          const line = h('div', { class: 'md' });
+          line.append(toDom(firstLine(card.body)));
+          line.addEventListener('click', reveal);
+          return h('article', { class: 'card collapsed', 'data-id': card.id }, line,
+            h('div', { class: 'actions' }, btn('Show answer', reveal, 'primary')));
+        }
         return cardView(card, {
           path: day.file, section: sec.name,
           meta: card.meta.moved ? 'Remembered ' + shortDate(card.meta.moved) : null,
@@ -364,6 +378,7 @@ function renderCheck() {
       })));
   }
   if (!shown) out.push(h('p', { class: 'empty', text: 'Nothing to check for ' + day.name + '.' }));
+  else out.splice(1, 0, h('p', { class: 'note', text: 'Try to recall each card, then tap Show answer and decide.' }));
   if (later) {
     out.push(h('p', { class: 'note' }, plural(later, 'card') + ' remembered today — they come up next ' + day.name + '. ',
       btn(showLater ? 'Hide' : 'Show', () => { showLater = !showLater; render(); }, 'link')));
@@ -381,10 +396,6 @@ function renderCheck() {
         })));
     }
   }
-  const done = engine.state().weekCheckDone === date;
-  out.push(h('div', { class: 'done-box' + (done ? ' done' : '') }, done
-    ? [h('span', { text: '✓ Weekly check done today.' }), btn('Undo', () => commit(stateOp('weekCheckDone', null)), 'link')]
-    : [h('span', { text: 'Finished checking today’s cards?' }), btn('Mark weekly check done', () => commit(stateOp('weekCheckDone', date), 'Weekly check marked as done.'), 'primary')]));
   return out;
 }
 
@@ -464,8 +475,8 @@ function render() {
   const view = { today: () => renderList(CURRENT), prepared: () => renderList(PREPARED), check: renderCheck, archive: renderArchive, settings: renderSettings }[tab] || (() => renderList(CURRENT));
   $('#view').replaceChildren(...[view()].flat().filter(Boolean));
   if (animate) playMoves(before);
-  // Red dots: weekly check not done today / Prepared low. Blinking tab: a section of Prepared is empty.
-  $('#checkBadge').hidden = engine.state().weekCheckDone === today();
+  // Red dots: cards to check today / Prepared low. Blinking tab: a section of Prepared is empty.
+  $('#checkBadge').hidden = !dueToday(today());
   const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));
   $('#preparedBadge').hidden = !short.length;
   $('[data-tab=prepared]').classList.toggle('blink', short.some(x => x.have === 0));

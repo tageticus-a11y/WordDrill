@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseBlocks, parseInline, plainText, toggleWrap, toggleLinePrefix } from '../js/markdown.js';
+import { parseBlocks, parseInline, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine } from '../js/markdown.js';
 
 test('inline bold, italic, escapes', () => {
   assert.deepEqual(parseInline('a **b** *c* _d_ \\*e\\*'), [
@@ -26,6 +26,36 @@ test('numbered items separated by quotes keep their numbers', () => {
   assert.deepEqual(b.map(x => x.t), ['ol', 'quote', 'ol', 'quote', 'ol']);
   assert.deepEqual(b.filter(x => x.t === 'ol').map(x => x.start), [1, 2, 3]);
   assert.equal(parseBlocks('5. a\n6. b')[0].start, 5);
+});
+
+test('underline between tildes, inline code', () => {
+  assert.deepEqual(parseInline('~прил.~ and ~~noun~~'), [
+    { t: 'u', c: [{ t: 'text', v: 'прил.' }] }, { t: 'text', v: ' and ' }, { t: 'u', c: [{ t: 'text', v: 'noun' }] }
+  ]);
+  assert.deepEqual(parseInline('about ~ 5 ~ words'), [{ t: 'text', v: 'about ~ 5 ~ words' }]);
+  assert.deepEqual(parseInline('`*raw* ~x~`'), [{ t: 'code', v: '*raw* ~x~' }]);
+});
+
+test('``` box keeps its lines as they are', () => {
+  const b = parseBlocks('word\n```\nfrom Latin *raucus*\n## not a heading\n```\n> example');
+  assert.deepEqual(b.map(x => x.t), ['p', 'code', 'quote']);
+  assert.equal(b[1].text, 'from Latin *raucus*\n## not a heading');
+  assert.equal(parseBlocks('```\nunclosed')[0].text, 'unclosed');
+  assert.equal(plainText('```\nLat. raucus\n```'), 'Lat. raucus');
+});
+
+test('toggleFence wraps lines in a box and unwraps them', () => {
+  const v = 'word\nfrom Latin\nexample';
+  const r = toggleFence(v, 6, 9);
+  assert.equal(r.value, 'word\n```\nfrom Latin\n```\nexample');
+  assert.equal(r.value.slice(r.start, r.end), 'from Latin');
+  assert.equal(toggleFence(r.value, r.start, r.end).value, v);
+  assert.equal(toggleFence('', 0, 0).value, '```\n\n```');
+});
+
+test('first line for collapsed cards', () => {
+  assert.equal(firstLine('\n  raucous (խռպոտ)\n[ˈrɔːkəs]'), 'raucous (խռպոտ)');
+  assert.equal(firstLine(''), '');
 });
 
 test('plain text for search', () => {

@@ -18,19 +18,19 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
 
 ## Workflow of the user
 - **Today:** three sections (Armenian, English, General) with daily targets ("Cards per day": Armenian 2, English 2, General 1 by default). The targets are stored in `state.json` as `targets` and edited in Settings.
-- **Prepared** (`prepared.md`, the tab right of Today): the user prepares the next portion of cards each day. It works like Today: add, edit, up/down, delete.
+- **Tabs, in order:** Today, Weekly check, Prepared, Archive.
+- **Prepared** (`prepared.md`): the user prepares the next portion of cards each day. It works like Today: add, edit, up/down, delete.
 - **✓ Remembered** moves a card to today's weekday file, and the cards below it move up. If the section is then below its target, the **top** Prepared card of the same section joins Today at the bottom, with meta `started=date`. If Today had more cards than the target, nothing is refilled. See `rememberPlan` in `ops.js`; its Undo restores both cards.
 - **Moving cards by hand:** "→ Today" on a Prepared card pushes it into Today regardless of the target. "← Prepared" in Today's ⋯ menu puts a card back at the top of Prepared.
 - **Prepared warnings:**
   - When a section of Prepared holds fewer cards than its target (`preparedShortage`), the Prepared tab gets a red dot and Today shows a "Prepared is running low" banner.
   - When a section is completely empty, the Prepared tab also blinks three times (when that happens or the app opens), not constantly.
-  - The Weekly check dot is red too.
-- **Weekly check:** on the same weekday a week later, each card that is due gets one of two answers:
+- **Weekly check:** on the same weekday a week later, each card that is due starts **collapsed**: only its first line shows, so the answer can't be peeked at. "Show answer" (or a tap) reveals it. Then the card gets one of two answers:
   - **Still know** → archive.
   - **Forgot** → deleted, text copied to the clipboard.
 - **Wrong section:** "Move to…" in the ⋯ menu (Today, Prepared, Weekly check) moves a card to another section of the same file.
 - **Remembered by mistake:** in Weekly check, the note "N cards remembered today" has Show/Hide. The list it opens offers "← Back to Today" (`backToTodayOp` drops the `moved` date).
-- **Reminder:** a banner at the bottom of Today shows until "Mark weekly check done" is pressed for that day. The `weekCheckDone` date in `state.json` is synced across devices.
+- **Weekly check reminder:** a red dot on the tab and a banner on Today (above the Prepared one) whenever today's weekday file has cards from earlier weeks (`dueToday`). The check is done when none are left. There is no "Mark done" button any more; an old `weekCheckDone` in `state.json` is ignored and kept.
 
 ## Data layout in Dropbox (paths are lowercase, relative to the app folder)
 ```
@@ -49,7 +49,7 @@ Later releases add `flow/` and `queue/` next to these.
 ## Armenian
 
 <!-- card id=k3x9a added=2026-11-12 moved=2026-11-12 -->
-card body: free Markdown (bold, italic, > quotes, lists)
+card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ```)
 
 ## English
 ...
@@ -99,7 +99,7 @@ card body: free Markdown (bold, italic, > quotes, lists)
   - **`sync(core)`:** flush → list the folder → download the core files and already-loaded files whose rev changed → flush.
   - **Archive files** download lazily (`load`).
   - **Conflicts are merged by replaying ops.** There are no "(my version)" copies as in Stanzas.
-- `markdown.js`:
+- `markdown.js`: the subset is **bold**, *italic*, ~underline~ or ~~underline~~ (not strikethrough), `inline code`, and ``` boxes (shown in a tinted monospace box, meant for etymology; their content isn't parsed). The toolbar has B I U ❝ • 1. { }.
   - **Parsing (pure):** `parseBlocks` / `parseInline` for the Markdown subset; single newlines become line breaks.
   - **Rendering:** `toDom` builds nodes with `createElement` and text nodes only, never `innerHTML` with user content.
   - **Toolbar text edits:** `toggleWrap` and `toggleLinePrefix`.

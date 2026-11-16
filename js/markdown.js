@@ -5,6 +5,8 @@
 const QUOTE_RE = /^ {0,3}> ?(.*)$/;
 const UL_RE = /^ {0,3}[-*+][ \t]+(.*)$/;
 const OL_RE = /^ {0,3}\d{1,9}[.)][ \t]+(.*)$/;
+const FENCE_RE = /^ {0,3}```/;   // ``` … ``` block: shown in a box as is (e.g. etymology)
+const FENCE_END_RE = /^ {0,3}```[ \t]*$/;
 
 /** md → [{ t: 'p', lines: [inline[]] } | { t: 'quote', blocks } | { t: 'ul'|'ol', items: [inline[]] }] */
 export function parseBlocks(md) {
@@ -14,7 +16,13 @@ export function parseBlocks(md) {
   while (i < lines.length) {
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
-    if (QUOTE_RE.test(line)) {
+    if (FENCE_RE.test(line)) {
+      const inner = [];
+      i++;
+      while (i < lines.length && !FENCE_END_RE.test(lines[i])) inner.push(lines[i++]);
+      i++;   // the closing fence (or the end of the card)
+      blocks.push({ t: 'code', text: inner.join('\n') });
+    } else if (QUOTE_RE.test(line)) {
       const inner = [];
       while (i < lines.length && QUOTE_RE.test(lines[i])) inner.push(lines[i++].match(QUOTE_RE)[1]);
       blocks.push({ t: 'quote', blocks: parseBlocks(inner.join('\n')) });
@@ -26,7 +34,7 @@ export function parseBlocks(md) {
       blocks.push(re === UL_RE ? { t: 'ul', items } : { t: 'ol', start, items });
     } else {
       const ls = [];
-      while (i < lines.length && lines[i].trim() && !QUOTE_RE.test(lines[i]) && !UL_RE.test(lines[i]) && !OL_RE.test(lines[i]))
+      while (i < lines.length && lines[i].trim() && !QUOTE_RE.test(lines[i]) && !UL_RE.test(lines[i]) && !OL_RE.test(lines[i]) && !FENCE_RE.test(lines[i]))
         ls.push(parseInline(lines[i++].trim()));
       blocks.push({ t: 'p', lines: ls });
     }
@@ -34,9 +42,10 @@ export function parseBlocks(md) {
   return blocks;
 }
 
-const INLINE_RE = /\\([\\*_`>#\-+.!\[\]()~])|\*\*(?=\S)([\s\S]*?\S)\*\*|__(?=\S)([\s\S]*?\S)__|\*(?=[^\s*])([\s\S]*?[^\s*])\*|(?<![\p{L}\p{N}_])_(?=[^\s_])([\s\S]*?[^\s_])_(?![\p{L}\p{N}_])/gu;
+// Groups: 1 escape, 2 `code`, 3 **bold**, 4 __bold__, 5 *italic*, 6 _italic_, 7 ~~underline~~, 8 ~underline~
+const INLINE_RE = /\\([\\*_`>#\-+.!\[\]()~])|`([^`\n]+)`|\*\*(?=\S)([\s\S]*?\S)\*\*|__(?=\S)([\s\S]*?\S)__|\*(?=[^\s*])([\s\S]*?[^\s*])\*|(?<![\p{L}\p{N}_])_(?=[^\s_])([\s\S]*?[^\s_])_(?![\p{L}\p{N}_])|~~(?=\S)([\s\S]*?\S)~~|~(?=[^\s~])([\s\S]*?[^\s~])~/gu;
 
-/** text → [{ t: 'text', v } | { t: 'b'|'i', c: inline[] }] */
+/** text → [{ t: 'text', v } | { t: 'code', v } | { t: 'b'|'i'|'u', c: inline[] }] */
 export function parseInline(s) {
   const out = [];
   const text = v => { if (!v) return; const last = out[out.length - 1]; if (last && last.t === 'text') last.v += v; else out.push({ t: 'text', v }); };
@@ -45,8 +54,10 @@ export function parseInline(s) {
   while ((m = re.exec(s))) {
     text(s.slice(at, m.index));
     if (m[1] != null) text(m[1]);
-    else if (m[2] != null || m[3] != null) out.push({ t: 'b', c: parseInline(m[2] ?? m[3]) });
-    else out.push({ t: 'i', c: parseInline(m[4] ?? m[5]) });
+    else if (m[2] != null) out.push({ t: 'code', v: m[2] });
+    else if (m[3] != null || m[4] != null) out.push({ t: 'b', c: parseInline(m[3] ?? m[4]) });
+    else if (m[5] != null || m[6] != null) out.push({ t: 'i', c: parseInline(m[5] ?? m[6]) });
+    else out.push({ t: 'u', c: parseInline(m[7] ?? m[8]) });
     at = re.lastIndex;
   }
   text(s.slice(at));
@@ -55,16 +66,20 @@ export function parseInline(s) {
 
 /** Plain text without markup (search) */
 export function plainText(md) {
-  const inl = xs => xs.map(x => (x.t === 'text' ? x.v : inl(x.c))).join('');
-  const blk = bs => bs.map(b => b.t === 'p' ? b.lines.map(inl).join('\n') : b.t === 'quote' ? blk(b.blocks) : b.items.map(inl).join('\n')).join('\n');
+  const inl = xs => xs.map(x => (x.t === 'text' || x.t === 'code' ? x.v : inl(x.c))).join('');
+  const blk = bs => bs.map(b => b.t === 'p' ? b.lines.map(inl).join('\n') : b.t === 'quote' ? blk(b.blocks)
+    : b.t === 'code' ? b.text : b.items.map(inl).join('\n')).join('\n');
   return blk(parseBlocks(md));
 }
 
 /** Builds DOM nodes (browser only) */
 export function toDom(md, doc = document) {
   const el = (tag, kids) => { const e = doc.createElement(tag); kids.forEach(k => e.append(k)); return e; };
-  const inl = xs => xs.map(x => (x.t === 'text' ? doc.createTextNode(x.v) : el(x.t === 'b' ? 'strong' : 'em', inl(x.c))));
+  const TAGS = { b: 'strong', i: 'em', u: 'u' };
+  const inl = xs => xs.map(x => (x.t === 'text' ? doc.createTextNode(x.v)
+    : x.t === 'code' ? el('code', [doc.createTextNode(x.v)]) : el(TAGS[x.t], inl(x.c))));
   const blk = bs => bs.map(b => {
+    if (b.t === 'code') return el('pre', [doc.createTextNode(b.text)]);
     if (b.t === 'p') return el('p', b.lines.flatMap((l, i) => (i ? [doc.createElement('br'), ...inl(l)] : inl(l))));
     if (b.t === 'quote') return el('blockquote', blk(b.blocks));
     const list = el(b.t, b.items.map(it => el('li', inl(it))));
@@ -118,3 +133,23 @@ export function toggleLinePrefix(value, start, end, prefix) {
   const v = value.slice(0, ls) + block + value.slice(le);
   return { value: v, start: lines.length === 1 && !lines[0] ? ls + block.length : ls, end: ls + block.length };
 }
+
+/** Puts the selected lines in a ``` box, or takes them out if the box is right around them */
+export function toggleFence(value, start, end) {
+  const ls = value.lastIndexOf('\n', start - 1) + 1;
+  let le = value.indexOf('\n', end > start && value[end - 1] === '\n' ? end - 1 : end);
+  if (le < 0) le = value.length;
+  const block = value.slice(ls, le);
+  const prevStart = ls > 0 ? value.lastIndexOf('\n', ls - 2) + 1 : -1;
+  const prevLine = ls > 0 ? value.slice(prevStart, ls - 1) : null;
+  let nextEnd = le < value.length ? value.indexOf('\n', le + 1) : -1;
+  if (le < value.length && nextEnd < 0) nextEnd = value.length;
+  const nextLine = le < value.length ? value.slice(le + 1, nextEnd) : null;
+  if (prevLine != null && nextLine != null && FENCE_END_RE.test(prevLine) && FENCE_END_RE.test(nextLine)) {
+    return { value: value.slice(0, prevStart) + block + value.slice(nextEnd), start: prevStart, end: prevStart + block.length };
+  }
+  return { value: value.slice(0, ls) + '```\n' + block + '\n```' + value.slice(le), start: ls + 4, end: ls + 4 + block.length };
+}
+
+/** The first non-empty line of a card: what a collapsed card shows in the weekly check */
+export const firstLine = md => (String(md || '').split('\n').find(l => l.trim() && !FENCE_RE.test(l)) || '').trim();

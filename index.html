@@ -17,14 +17,14 @@
   /* Night ink: deep navy paper with a cornflower accent (a cousin of Stanzas' blue-grey, without its amber) */
   :root {
     --paper: #EDF2F8; --surface: #FFFFFF; --ink: #17243A; --muted: #56677F; --rule: #D0DAE6;
-    --accent: #2A62B8; --on-accent: #FFFFFF; --quote: #8AAEE0; --error: #B3402F; --ok: #2E7D5B; --alert: #D6382F; --alert-tint: rgba(214, 56, 47, .12);
+    --accent: #2A62B8; --on-accent: #FFFFFF; --quote: #8AAEE0; --error: #B3402F; --ok: #2E7D5B; --alert: #D6382F; --alert-tint: rgba(214, 56, 47, .12); --box: #F3F0FA; --box-ink: #4B3F78;
     --tint: rgba(42, 98, 184, .08);
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --paper: #0F1724; --surface: #172235; --ink: #E2EAF4; --muted: #8C9DB4; --rule: #263550;
-      --accent: #7AAEF7; --on-accent: #0A1424; --quote: #4C78B8; --error: #E9806F; --ok: #74C99A; --alert: #FF5A4E; --alert-tint: rgba(255, 90, 78, .16);
+      --accent: #7AAEF7; --on-accent: #0A1424; --quote: #4C78B8; --error: #E9806F; --ok: #74C99A; --alert: #FF5A4E; --alert-tint: rgba(255, 90, 78, .16); --box: #1E1B33; --box-ink: #C9BEF5;
       --tint: rgba(122, 174, 247, .12);
       color-scheme: dark;
     }
@@ -84,6 +84,16 @@
   .md blockquote p { margin: 0 0 4px; }
   .md ul, .md ol { margin: 0 0 8px; padding-left: 22px; }
   .md strong { font-weight: 700; }
+  .md u { text-underline-offset: 3px; }
+  /* Box (``` … ```): set apart from the meaning, e.g. etymology */
+  .md pre {
+    margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; background: var(--box); border: 1px solid var(--rule);
+    color: var(--box-ink); font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .md code { padding: 1px 5px; border-radius: 5px; background: var(--box); color: var(--box-ink); font: .88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .card.collapsed .md { cursor: pointer; }
+  .tool.u { text-decoration: underline; text-underline-offset: 3px; }
+  .tool.box { font-family: ui-monospace, Consolas, monospace; font-size: 14px; }
   .md.editable { cursor: text; }
   .sec.later { opacity: .85; }
   .meta { font-size: 13px; color: var(--muted); margin-top: 6px; }
@@ -173,8 +183,8 @@
       </div>
       <nav>
         <button type="button" data-tab="today">Today</button>
-        <button type="button" data-tab="prepared">Prepared<span id="preparedBadge" class="badge" hidden></span></button>
         <button type="button" data-tab="check">Weekly check<span id="checkBadge" class="badge" hidden></span></button>
+        <button type="button" data-tab="prepared">Prepared<span id="preparedBadge" class="badge" hidden></span></button>
         <button type="button" data-tab="archive">Archive</button>
       </nav>
     </div>
