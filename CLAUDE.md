@@ -19,14 +19,16 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
 ## Workflow of the user
 - **Today:** three sections (Armenian, English, General) with daily targets ("Cards per day": Armenian 2, English 2, General 1 by default). The targets are stored in `state.json` as `targets` and edited in Settings.
 - **Tabs, in order:** Today, Weekly check, Prepared, Archive.
-- **Recall on Today** (the user's routine: type the day's words from memory, then have an AI check the spelling, morning and midday):
-  - Today's list starts **hidden**: a Recall section with typing boxes and per-section counts. Ctrl+Enter (or "+ Next card") starts the next box; Backspace in an empty box removes it. No spellcheck or autocorrect in the boxes.
-  - "Show today's cards" ("Skip — show today's cards" when nothing is typed) opens the list. It stays open for the session (sessionStorage `wd.listShown` = date) and hides again after 30 min in the background. "Hide and type again" clears the typed cards (Undo) and hides the list.
-  - Typed cards live **only in this browser** (localStorage `wd.recall` = {date, items}); a new day starts empty. Never written to Dropbox.
+- **Recall on Today and Weekly check** (the user's routine: type the day's words from memory, then have an AI check the spelling; morning and midday; the user fills Prepared and then comes back to type Today's cards):
+  - Both lists (`k` = `today` / `check`; the check only when cards are due) start **hidden**: a Recall section with typing boxes and per-section counts. Ctrl+Enter (or "+ Next card") starts the next box; Backspace in an empty box removes it. No spellcheck or autocorrect in the boxes. The buttons update while typing ("Skip — show …" when nothing is typed).
+  - "Show …" opens the list for the session (sessionStorage `wd.listShown` / `wd.checkShown` = date). It hides again (`hideList`) when the user **opens Prepared**, after 30 min in the background, and in a new session. "Hide and type again" clears the typed cards (Undo) and hides the list.
+  - Showing a list marks its typed cards `shown`; the next Recall panel then starts a new round empty, with an Undo toast.
+  - Weekly check: typed something → the cards open fully; skipped → each card starts collapsed.
+  - Typed cards live **only in this browser** (localStorage `wd.recall` / `wd.recallCheck` = {date, items, shown}); a new day starts empty. Never written to Dropbox.
   - "Copy for AI check" copies `buildCheckText` (`js/recall.js`): the prompt with `{typed}` and `{cards}` replaced (lists appended if a placeholder is missing). The prompt is `aiPrompt` in state.json, edited in Settings; null or empty means `DEFAULT_CHECK_PROMPT`.
 - **Prepared** (`prepared.md`): the user prepares the next portion of cards each day. It works like Today: add, edit, up/down, delete.
 - **✓ Remembered** moves a card to today's weekday file, and the cards below it move up. If the section is then below its target, the **top** Prepared card of the same section joins Today at the bottom, with meta `started=date`. If Today had more cards than the target, nothing is refilled. See `rememberPlan` in `ops.js`; its Undo restores both cards.
-- **Moving cards by hand:** "→ Today" on a Prepared card pushes it into Today regardless of the target. "← Prepared" in Today's ⋯ menu puts a card back at the top of Prepared.
+- **Moving cards by hand:** "← Today" on a Prepared card pushes it into Today regardless of the target. "Prepared →" in Today's ⋯ menu puts a card back at the top of Prepared. Arrows (and the slide-out direction, `leave(ev, fn, 'left')`) point to where the target tab is.
 - **Prepared warnings:**
   - When a section of Prepared holds fewer cards than its target (`preparedShortage`), the Prepared tab gets a red dot and Today shows a "Prepared is running low" banner.
   - When a section is completely empty, the Prepared tab also blinks three times (when that happens or the app opens), not constantly.
@@ -104,7 +106,7 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - **`sync(core)`:** flush → list the folder → download the core files and already-loaded files whose rev changed → flush.
   - **Archive files** download lazily (`load`).
   - **Conflicts are merged by replaying ops.** There are no "(my version)" copies as in Stanzas.
-- `markdown.js`: the subset is **bold**, *italic*, ~underline~ or ~~underline~~ (not strikethrough), `inline code`, and ``` boxes (shown in a tinted monospace box, meant for etymology; their content isn't parsed). The toolbar has B I U ❝ • 1. { }.
+- `markdown.js`: the subset is **bold**, *italic*, ~underline~ or ~~underline~~ (not strikethrough), `inline code`, and ``` boxes (shown in a tinted monospace box, meant for etymology; their content isn't parsed), and GFM pipe tables (header row, `| --- | :-: |` delimiter row with the same cell count, `\|` for a literal pipe; shown scrollable sideways; a collapsed card shows only the first cell). The toolbar has B I U ❝ • 1. { } ⊞ (`insertTable`).
   - **Parsing (pure):** `parseBlocks` / `parseInline` for the Markdown subset; single newlines become line breaks.
   - **Rendering:** `toDom` builds nodes with `createElement` and text nodes only, never `innerHTML` with user content.
   - **Toolbar text edits:** `toggleWrap` and `toggleLinePrefix`.

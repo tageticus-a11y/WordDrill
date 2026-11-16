@@ -29,6 +29,6 @@ test('check text puts both lists into the prompt', () => {
 
 test('check text without placeholders adds the lists at the end', () => {
   const t = buildCheckText('Check my spelling.', [], [{ name: 'English', cards: [{ body: '~adj.~ raucous' }] }]);
-  assert.equal(t, 'Check my spelling.\n\nWhat I typed:\n(nothing typed)\n\nToday\'s cards:\nEnglish:\n1. adj. raucous\n');
+  assert.equal(t, 'Check my spelling.\n\nWhat I typed:\n(nothing typed)\n\nThe cards:\nEnglish:\n1. adj. raucous\n');
   assert.ok(buildCheckText(DEFAULT_CHECK_PROMPT, ['x'], []).includes('(no cards)'));
 });

@@ -12,9 +12,9 @@ import {
 } from './ops.js';
 import { createVersions } from './versions.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText } from './recall.js';
-import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine } from './markdown.js';
+import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '7';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '8';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -47,17 +47,19 @@ let showLater = false;
 const revealed = new Set();                 // Weekly check: cards whose answer is shown (collapsed by default)
 let animateNext = false;                    // the next render slides cards to their new places
 
-// Recall on Today: cards typed from memory (this browser only, for today) before Today's list is shown.
-// The list is hidden at the start of a session and again after a long break (LIST_HIDE_AFTER).
-let recall = recallFor(store.get('wd.recall'), today());
+// Recall: cards typed from memory (this browser only, for today) before a list is shown. Two lists:
+// 'today' (Today's cards) and 'check' (the weekly check). A list is hidden at the start of a session,
+// after a long break (LIST_HIDE_AFTER) and after a visit to Prepared; hiding clears the typed cards.
+const RECALL = { today: { key: 'wd.recall', shown: 'wd.listShown' }, check: { key: 'wd.recallCheck', shown: 'wd.checkShown' } };
+const recalls = { today: recallFor(store.get(RECALL.today.key), today()), check: recallFor(store.get(RECALL.check.key), today()) };
 let focusRecall = null;                     // typed card to focus after the next render
 const LIST_HIDE_AFTER = 30 * 60 * 1000;
 const session = {
   get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
   set(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) {} }
 };
-const listShown = () => session.get('wd.listShown') === today();
-const setListShown = on => session.set('wd.listShown', on ? today() : null);
+const listShown = k => session.get(RECALL[k].shown) === today();
+const setListShown = (k, on) => session.set(RECALL[k].shown, on ? today() : null);
 
 /* ============ Small helpers ============ */
 function h(tag, attrs, ...kids) {
@@ -128,12 +130,13 @@ function commit(ops, message, undo) {
 
 /* ============ Motion ============ */
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-// The card slides out to the right, then the change is made (and the cards below move up)
-function leave(ev, fn) {
+// The card slides out (to the right, or to the left when it goes to a tab on the left), then the change
+// is made (and the cards below move up)
+function leave(ev, fn, dir) {
   const el = ev && ev.currentTarget && ev.currentTarget.closest('.card');
   if (!el || reducedMotion() || !el.animate) return fn();
   el.querySelectorAll('button').forEach(b => { b.disabled = true; });
-  el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(48px)' }],
+  el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(' + (dir === 'left' ? -48 : 48) + 'px)' }],
     { duration: 200, easing: 'ease-in', fill: 'forwards' }).finished.then(fn, fn);
 }
 const cardRects = () => new Map([...document.querySelectorAll('#view .card[data-id]')].map(e => [e.dataset.id, e.getBoundingClientRect().top]));
@@ -242,6 +245,7 @@ function renderEditor() {
       tool('U', 'Underline (Ctrl+U): ~text~', () => wrap('~'), 'u'),
       tool('❝', 'Quote', () => prefix('> ')), tool('•', 'List', () => prefix('- ')), tool('1.', 'Numbered list', () => prefix('1. ')),
       tool('{ }', 'Box, e.g. for etymology', () => set(toggleFence(t.value, t.selectionStart, t.selectionEnd)), 'box'),
+      tool('⊞', 'Table', () => set(insertTable(t.value, t.selectionStart, t.selectionEnd)), 'table'),
       earlier.length ? tool('↺ ' + earlier.length, 'Earlier versions', () => { list.hidden = !list.hidden; }, 'hist') : null),
     t,
     list,
@@ -292,17 +296,16 @@ const sectionsOf = doc => {
 function renderList(path) {
   const date = today(), doc = engine.doc(path), isToday = path === CURRENT;
   const targets = targetsOf(engine.state());
-  if (isToday && !listShown()) return renderRecall(date, doc, targets);
-  const out = [isToday
-    ? h('p', { class: 'date', text: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) })
-    : h('p', { class: 'date', text: 'Next cards, top first. ✓ Remembered in Today brings the top card of the same section into Today.' })];
-  if (isToday) {
-    const n = typedTexts(curRecall()).length;
-    out.push(h('div', { class: 'bar recall-bar' },
-      h('span', { class: 'note', text: n ? 'Typed from memory: ' + plural(n, 'card') + '.' : 'Nothing typed from memory today.' }),
-      n ? btn('Copy for AI check', copyCheck) : null,
-      btn('Hide and type again', typeAgain, 'link')));
+  const dateLine = () => h('p', { class: 'date', text: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) });
+  if (isToday && !listShown('today')) {
+    const counts = sectionsOf(doc).filter(sec => sec.cards.length || targets[sec.name]).map(sec => sec.name + ' ' + sec.cards.length).join(' · ');
+    return [dateLine(), recallPanel('today', 'today’s cards'),
+      h('p', { class: 'note hidden-list', text: 'Today’s cards are hidden: ' + (counts || 'none') + '.' }),
+      reminder(date), preparedReminder()];
   }
+  const out = [isToday ? dateLine()
+    : h('p', { class: 'date', text: 'Next cards, top first. ✓ Remembered in Today brings the top card of the same section into Today.' })];
+  if (isToday) out.push(recallBar('today'));
   for (const sec of sectionsOf(doc)) {
     const ids = sec.cards.map(c => c.id);
     const target = targets[sec.name] || 0;
@@ -314,13 +317,13 @@ function renderList(path) {
           const plan = rememberPlan(engine.doc(CURRENT), engine.doc(PREPARED), sec.name, card, date, target);
           commit(plan.ops, 'Moved to ' + weekday(date).name + '’s check.' + (plan.refill ? ' Next card added from Prepared.' : ''), plan.undo);
         }), 'primary')
-        : btn('→ Today', ev => leave(ev, () => commit(toTodayOp(sec.name, card, date), 'Moved to Today.', moveOp(CURRENT, PREPARED, sec.name, card, {}, i))), 'primary');
+        : btn('← Today', ev => leave(ev, () => commit(toTodayOp(sec.name, card, date), 'Moved to Today.', moveOp(CURRENT, PREPARED, sec.name, card, {}, i)), 'left'), 'primary');
       const actions = [main, btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')];
       if (more) actions.push(h('span', { class: 'more' },
         h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swap(i - 1) }, '↑'),
         h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
         sectionPicker(path, sec.name, card, i),
-        isToday ? btn('← Prepared', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Prepared.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null,
+        isToday ? btn('Prepared →', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Prepared.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null,
         btn('Delete', ev => leave(ev, () => { menuFor = null; commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)); }), 'danger')));
       return cardView(card, { path, section: sec.name, actions });
     });
@@ -337,22 +340,34 @@ function renderList(path) {
   return out;
 }
 /* ============ Recall ============ */
-function curRecall() { if (recall.date !== today()) recall = recallFor(null, today()); return recall; }
-const saveRecall = () => store.set('wd.recall', recall);
+// k: 'today' or 'check'
+function curRecall(k) { if (recalls[k].date !== today()) recalls[k] = recallFor(null, today()); return recalls[k]; }
+const saveRecall = k => store.set(RECALL[k].key, recalls[k]);
 const newRecallId = () => Math.random().toString(36).slice(2, 9);
-function showList() { setListShown(true); animateNext = true; render(); window.scrollTo(0, 0); }
-// Clears the typed cards (with Undo) and hides the list again
-function clearRecall(hide) {
-  const r = curRecall(), old = r.items.slice();
-  r.items = []; saveRecall();
-  if (hide) setListShown(false);
-  render();
-  if (typedTexts({ items: old }).length) toast('Typed cards cleared.', { undo: () => { curRecall().items = old; saveRecall(); render(); } });
+const restoreTyped = (k, items) => { curRecall(k).items = items; saveRecall(k); render(); };
+// recall.shown: the list was shown after this round of typing; the next Recall panel starts a new round
+function showList(k) {
+  const r = curRecall(k);
+  r.shown = true; saveRecall(k);
+  setListShown(k, true); animateNext = true; render(); window.scrollTo(0, 0);
 }
-const typeAgain = () => { clearRecall(true); window.scrollTo(0, 0); };
-function copyCheck() {
-  const text = buildCheckText(promptOf(engine.state()), typedTexts(curRecall()), sectionsOf(engine.doc(CURRENT)));
-  copyText(text).then(ok => toast(ok ? 'Copied: the prompt, your typed cards and today’s cards. Paste it into the AI chat.'
+const editingIn = k => !!editing && (k === 'today' ? editing.path === CURRENT : editing.path.startsWith('week/'));
+// Hides a list again (not while one of its cards is being edited)
+function hideList(k) { if (!editingIn(k)) setListShown(k, false); }
+// Clears the typed cards (with Undo); hide: also hides the list again
+function clearRecall(k, hide) {
+  const r = curRecall(k), old = r.items.slice();
+  r.items = []; r.shown = false; saveRecall(k);
+  if (hide) setListShown(k, false);
+  render();
+  if (hide) window.scrollTo(0, 0);
+  if (typedTexts({ items: old }).length) toast('Typed cards cleared.', { undo: () => restoreTyped(k, old) });
+}
+// The real cards a list is checked against
+const recallCards = k => k === 'today' ? sectionsOf(engine.doc(CURRENT)) : dueSections(checkedDay(), today());
+function copyCheck(k) {
+  const text = buildCheckText(promptOf(engine.state()), typedTexts(curRecall(k)), recallCards(k));
+  copyText(text).then(ok => toast(ok ? 'Copied: the prompt, your typed cards and the real cards. Paste it into the AI chat.'
     : 'Couldn’t copy to the clipboard.', ok ? {} : { error: true }));
 }
 // Clipboard: the API where allowed, else the old select-and-copy way
@@ -368,18 +383,32 @@ function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(() => true, old);
   return Promise.resolve(old());
 }
-function renderRecall(date, doc, targets) {
-  const r = curRecall();
+// Above a shown list: what was typed, Copy for AI check, Hide and type again
+function recallBar(k) {
+  const n = typedTexts(curRecall(k)).length;
+  return h('div', { class: 'bar recall-bar' },
+    h('span', { class: 'note', text: n ? 'Typed from memory: ' + plural(n, 'card') + '.' : 'Nothing typed from memory.' }),
+    n ? btn('Copy for AI check', () => copyCheck(k)) : null,
+    btn('Hide and type again', () => clearRecall(k, true), 'link'));
+}
+// The typing boxes shown instead of a hidden list; what: "today’s cards" / "the cards to check"
+function recallPanel(k, what) {
+  const r = curRecall(k);
+  if (r.shown) {
+    // The list was shown since these were typed: a new round starts empty (Undo brings them back)
+    const old = r.items.slice();
+    r.items = []; r.shown = false; saveRecall(k);
+    if (typedTexts({ items: old }).length) setTimeout(() => toast('Typed cards from the last round were cleared.', { undo: () => restoreTyped(k, old) }));
+  }
   if (!r.items.length) r.items.push({ id: newRecallId(), text: '' });   // always one box to type in
-  const n = typedTexts(r).length;
   const addAfter = it => {
     const n = { id: newRecallId(), text: '' };
     r.items.splice(r.items.indexOf(it) + 1, 0, n);
-    saveRecall(); focusRecall = n.id; render();
+    saveRecall(k); focusRecall = n.id; render();
   };
   const remove = it => {
     const i = r.items.indexOf(it);
-    r.items.splice(i, 1); saveRecall();
+    r.items.splice(i, 1); saveRecall(k);
     if (r.items.length) focusRecall = r.items[Math.max(0, i - 1)].id;
     render();
   };
@@ -389,7 +418,7 @@ function renderRecall(date, doc, targets) {
       placeholder: i ? 'Next card' : 'Type a card from memory', 'aria-label': 'Card ' + (i + 1), 'data-rid': it.id });
     t.value = it.text;
     const grow = () => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; };
-    t.addEventListener('input', () => { it.text = t.value; saveRecall(); grow(); });
+    t.addEventListener('input', () => { it.text = t.value; saveRecall(k); grow(); updateRecallButtons(); });
     t.addEventListener('keydown', ev => {
       if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); addAfter(it); }
       else if (ev.key === 'Backspace' && !t.value && r.items.length > 1) { ev.preventDefault(); remove(it); }
@@ -399,22 +428,26 @@ function renderRecall(date, doc, targets) {
     return h('div', { class: 'typed' }, h('span', { class: 'num', text: (i + 1) + '.' }), t,
       btn('✕', () => remove(it), 'icon', 'Remove'));
   };
-  const counts = sectionsOf(doc).filter(sec => sec.cards.length || targets[sec.name]).map(sec => sec.name + ' ' + sec.cards.length).join(' · ');
-  return [
-    h('p', { class: 'date', text: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) }),
-    h('section', { class: 'sec recall' },
-      h('h2', {}, 'Recall', h('span', { class: 'count', text: String(n) })),
-      h('p', { class: 'note', text: 'Type every card you remember, in any order, then show today’s cards. Ctrl+Enter starts the next card. Kept on this device only, for today.' }),
-      r.items.map(box),
-      btn('+ Next card', () => addAfter(r.items[r.items.length - 1]), 'add'),
-      h('div', { class: 'row' },
-        btn(n ? 'Show today’s cards' : 'Skip — show today’s cards', showList, 'primary'),
-        n ? btn('Copy for AI check', copyCheck) : null,
-        n ? btn('Clear', () => clearRecall(false), 'link') : null)),
-    h('p', { class: 'note hidden-list', text: 'Today’s cards are hidden: ' + (counts || 'none') + '.' }),
-    reminder(date), preparedReminder()
-  ];
+  const count = h('span', { class: 'count' });
+  const showBtn = btn('', () => showList(k), 'primary');
+  const copyBtn = btn('Copy for AI check', () => copyCheck(k));
+  const clearBtn = btn('Clear', () => clearRecall(k, false), 'link');
+  // Kept up to date while typing (no redraw, so the text box keeps the focus)
+  updateRecallButtons = () => {
+    const n = typedTexts(r).length;
+    count.textContent = String(n);
+    showBtn.textContent = (n ? 'Show ' : 'Skip — show ') + what;
+    copyBtn.hidden = clearBtn.hidden = !n;
+  };
+  updateRecallButtons();
+  return h('section', { class: 'sec recall' },
+    h('h2', {}, 'Recall', count),
+    h('p', { class: 'note', text: 'Type every card you remember, in any order, then show ' + what + '. Ctrl+Enter starts the next card. Kept on this device only, for today.' }),
+    r.items.map(box),
+    btn('+ Next card', () => addAfter(r.items[r.items.length - 1]), 'add'),
+    h('div', { class: 'row' }, showBtn, copyBtn, clearBtn));
 }
+let updateRecallButtons = () => {};
 
 function preparedReminder() {
   const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));
@@ -434,25 +467,33 @@ function reminder(date) {
 }
 
 /* ============ Weekly check ============ */
+const checkedDay = () => checkDay ? WEEKDAYS[checkDay - 1] : weekday(today());
+// Sections of a weekday file with only the cards due on date
+const dueSections = (day, date) => sectionsOf(engine.doc(day.file)).map(sec => ({ name: sec.name, cards: sec.cards.filter(c => isDue(c, date)) }));
 function renderCheck() {
   const date = today(), todayDay = weekday(date);
-  const day = checkDay ? WEEKDAYS[checkDay - 1] : todayDay;
+  const day = checkedDay();
   const doc = engine.doc(day.file);
   const select = h('select', { 'aria-label': 'Day', onchange: ev => { checkDay = +ev.target.value === todayDay.n ? null : +ev.target.value; render(); } },
     WEEKDAYS.map(d => h('option', { value: d.n, selected: d.n === day.n }, d.name + (d.n === todayDay.n ? ' (today)' : ''))));
   const out = [h('div', { class: 'bar' }, h('label', { text: 'Cards remembered on' }), select)];
-  let shown = 0, later = 0;
-  for (const sec of sectionsOf(doc)) {
-    const due = sec.cards.filter(c => isDue(c, date));
-    later += sec.cards.length - due.length;
-    if (!due.length) continue;
-    shown += due.length;
+  const dueSecs = dueSections(day, date).filter(s => s.cards.length);
+  const shown = dueSecs.reduce((n, s) => n + s.cards.length, 0);
+  const later = allCards(doc).length - shown;
+  // Hidden until shown: type the cards from memory first (or skip)
+  const hidden = shown && !listShown('check') && !(editing && editing.path === day.file);
+  if (hidden) out.push(recallPanel('check', 'the cards to check'),
+    h('p', { class: 'note hidden-list', text: 'Cards to check are hidden: ' + dueSecs.map(s => s.name + ' ' + s.cards.length).join(' · ') + '.' }));
+  // Typed from memory first: the cards open fully; skipped: each card starts collapsed
+  const typed = typedTexts(curRecall('check')).length > 0;
+  if (!hidden) for (const { name, cards: due } of dueSecs) {
+    const sec = sectionsOf(doc).find(s => s.name === name);
     out.push(h('section', { class: 'sec' },
       h('h2', {}, sec.name, h('span', { class: 'count', text: String(due.length) })),
       due.map(card => {
         const i = sec.cards.indexOf(card);
         // Collapsed first: only the first line, so the answer can't be peeked at
-        if (!revealed.has(card.id) && !(editing && editing.id === card.id)) {
+        if (!typed && !revealed.has(card.id) && !(editing && editing.id === card.id)) {
           const reveal = () => { revealed.add(card.id); render(); };
           const line = h('div', { class: 'md' });
           line.append(toDom(firstLine(card.body)));
@@ -480,7 +521,8 @@ function renderCheck() {
       })));
   }
   if (!shown) out.push(h('p', { class: 'empty', text: 'Nothing to check for ' + day.name + '.' }));
-  else out.splice(1, 0, h('p', { class: 'note', text: 'Try to recall each card, then tap Show answer and decide.' }));
+  else if (!hidden) out.splice(1, 0, recallBar('check'),
+    h('p', { class: 'note', text: typed ? 'Check what you typed, then decide for each card.' : 'Try to recall each card, then tap Show answer and decide.' }));
   if (later) {
     out.push(h('p', { class: 'note' }, plural(later, 'card') + ' remembered today — they come up next ' + day.name + '. ',
       btn(showLater ? 'Hide' : 'Show', () => { showLater = !showLater; render(); }, 'link')));
@@ -494,7 +536,7 @@ function renderCheck() {
           const i = sec.cards.indexOf(card);
           return cardView(card, { path: day.file, section: sec.name, meta: 'Remembered today',
             actions: [btn('← Back to Today', ev => leave(ev, () =>
-              commit(backToTodayOp(day.file, sec.name, card), 'Back in Today.', moveOp(CURRENT, day.file, sec.name, card, {}, i))))] });
+              commit(backToTodayOp(day.file, sec.name, card), 'Back in Today.', moveOp(CURRENT, day.file, sec.name, card, {}, i)), 'left'))] });
         })));
     }
   }
@@ -576,6 +618,8 @@ function promptSettings() {
 /* ============ Rendering ============ */
 function setTab(t) {
   autoSave();
+  // Filling Prepared, then back to type today's cards: Today and the weekly check are hidden again
+  if (t === 'prepared') { hideList('today'); hideList('check'); }
   tab = t; store.set('wd.tab', t); menuFor = null;
   render();
   window.scrollTo(0, 0);
@@ -619,7 +663,7 @@ function wire() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       // Back after a long break (say, from morning to midday): Today's list is hidden again for recall
-      if (hiddenAt && Date.now() - hiddenAt > LIST_HIDE_AFTER && !(editing && editing.path === CURRENT)) setListShown(false);
+      if (hiddenAt && Date.now() - hiddenAt > LIST_HIDE_AFTER) { hideList('today'); hideList('check'); }
       backgroundRender(); sync();
     } else { hiddenAt = Date.now(); autoSave(); flush(); }
   });
@@ -634,7 +678,7 @@ function wire() {
   setInterval(() => { if (today() !== day) { day = today(); backgroundRender(); } }, 60000);
 }
 function start() {
-  if (editing && editing.path === CURRENT) setListShown(true);   // a card was being edited: keep the list open
+  for (const k of ['today', 'check']) if (editingIn(k)) setListShown(k, true);   // a card was being edited: keep its list open
   show('app');
   render();
   if (editing) focusEditor();

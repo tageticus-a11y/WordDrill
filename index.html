@@ -90,6 +90,10 @@
     margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; background: var(--box); border: 1px solid var(--rule);
     color: var(--box-ink); font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
   }
+  .md .table { overflow-x: auto; margin: 0 0 8px; }
+  .md table { border-collapse: collapse; font-size: 15px; }
+  .md th, .md td { border: 1px solid var(--rule); padding: 4px 10px; text-align: left; vertical-align: top; }
+  .md th { background: var(--box); color: var(--box-ink); font-weight: 600; }
   .md code { padding: 1px 5px; border-radius: 5px; background: var(--box); color: var(--box-ink); font: .88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .card.collapsed .md { cursor: pointer; }
   .tool.u { text-decoration: underline; text-underline-offset: 3px; }
@@ -105,7 +109,7 @@
   button.add { width: 100%; border-style: dashed; color: var(--muted); background: none; }
 
   .editor { background: var(--surface); border: 1px solid var(--accent); border-radius: 12px; padding: 8px; margin: 0 0 10px; }
-  .toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
   .tool { min-width: 38px; padding: 4px 8px; }
   .tool.b { font-weight: 800; }
   .tool.i { font-style: italic; font-family: Georgia, serif; }

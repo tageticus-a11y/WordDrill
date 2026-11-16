@@ -1,9 +1,9 @@
-// Recall practice on Today (pure): the cards typed from memory before Today's list is shown, and the text
-// copied for an AI spelling check. The typed cards stay in this browser only (localStorage), never in Dropbox.
+// Recall practice (pure): the cards typed from memory before a list (Today, Weekly check) is shown, and the
+// text copied for an AI spelling check. The typed cards stay in this browser only (localStorage), never in Dropbox.
 
 import { plainText } from './markdown.js';
 
-export const DEFAULT_CHECK_PROMPT = `I'm memorizing words and phrases (Armenian, English, Russian). Below are two lists: what I typed from memory, and my real cards for today.
+export const DEFAULT_CHECK_PROMPT = `I'm memorizing words and phrases (Armenian, English, Russian). Below are two lists: what I typed from memory, and the real cards.
 
 Match each typed entry to its card yourself: the order may differ, and some cards may be missing because I couldn't recall them.
 For each typed entry, say whether it is right. If not, write the correct version and put the wrong or missing letters in **bold**.
@@ -13,7 +13,7 @@ Ignore formatting, punctuation and letter case unless they change the meaning. K
 What I typed:
 {typed}
 
-Today's cards:
+The cards:
 {cards}`;
 
 /** The prompt from state.json (Settings), or the default one */
@@ -48,6 +48,6 @@ export function buildCheckText(prompt, typed, sections) {
   const hasTyped = p.includes('{typed}'), hasCards = p.includes('{cards}');
   p = p.replace(/\{typed\}|\{cards\}/g, m => (m === '{typed}' ? typedText : cardsText));   // one pass: card text may contain "{cards}"
   if (!hasTyped) p += '\n\nWhat I typed:\n' + typedText;
-  if (!hasCards) p += '\n\nToday\'s cards:\n' + cardsText;
+  if (!hasCards) p += '\n\nThe cards:\n' + cardsText;
   return p.trim() + '\n';
 }

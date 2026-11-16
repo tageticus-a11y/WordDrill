@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseBlocks, parseInline, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine } from '../js/markdown.js';
+import { parseBlocks, parseInline, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from '../js/markdown.js';
 
 test('inline bold, italic, escapes', () => {
   assert.deepEqual(parseInline('a **b** *c* _d_ \\*e\\*'), [
@@ -56,6 +56,36 @@ test('toggleFence wraps lines in a box and unwraps them', () => {
 test('first line for collapsed cards', () => {
   assert.equal(firstLine('\n  raucous (խռպոտ)\n[ˈrɔːkəs]'), 'raucous (խռպոտ)');
   assert.equal(firstLine(''), '');
+  // A table shows only its first cell
+  assert.equal(firstLine('| գնալ | to go |\n| --- | --- |\n| գնում եմ | I go |'), 'գնալ');
+});
+
+test('tables: header, alignment, rows, escaped pipes', () => {
+  const b = parseBlocks('verb\n| A | B | C |\n|:--|:-:|--:|\n| **x** | y \\| z |\n| 1 | 2 | 3 | 4 |\n\nafter');
+  assert.deepEqual(b.map(x => x.t), ['p', 'table', 'p']);
+  const t = b[1];
+  assert.deepEqual(t.align, ['left', 'center', 'right']);
+  assert.deepEqual(t.head, [[{ t: 'text', v: 'A' }], [{ t: 'text', v: 'B' }], [{ t: 'text', v: 'C' }]]);
+  assert.equal(t.rows.length, 2);
+  assert.deepEqual(t.rows[0], [[{ t: 'b', c: [{ t: 'text', v: 'x' }] }], [{ t: 'text', v: 'y | z' }], []]);   // short row padded
+  assert.equal(t.rows[1].length, 3);                                                                       // long row cut
+  assert.equal(plainText('| a | b |\n|---|---|\n| c | d |'), 'a | b\nc | d');
+  // Rows end at a blank line; tables work inside quotes
+  assert.deepEqual(parseBlocks('> | a |\n> |---|\n> | b |')[0].blocks.map(x => x.t), ['table']);
+});
+
+test('pipes without a delimiter row stay text', () => {
+  assert.deepEqual(parseBlocks('a | b\nc | d').map(x => x.t), ['p']);
+  assert.deepEqual(parseBlocks('| a | b |\n| --- |').map(x => x.t), ['p']);   // cell counts differ
+  assert.deepEqual(parseBlocks('1) one | two\n2) three').map(x => x.t), ['ol']);
+});
+
+test('insertTable adds an empty table on the next line', () => {
+  const r = insertTable('word\nexample', 2, 2);
+  assert.equal(r.value, 'word\n\n| Word | Meaning |\n| --- | --- |\n|  |  |\n|  |  |\n\nexample');
+  assert.equal(r.value.slice(r.start, r.end), 'Word');
+  assert.equal(insertTable('', 0, 0).value, '| Word | Meaning |\n| --- | --- |\n|  |  |\n|  |  |');
+  assert.equal(parseBlocks(r.value)[1].t, 'table');
 });
 
 test('plain text for search', () => {
