@@ -98,7 +98,8 @@
   .card.collapsed .md { cursor: pointer; }
   .tool.u { text-decoration: underline; text-underline-offset: 3px; }
   .tool.box { font-family: ui-monospace, Consolas, monospace; font-size: 14px; }
-  .md.editable { cursor: text; }
+  .md { -webkit-user-select: text; user-select: text; }
+  button.remember { min-width: 56px; font-size: 18px; font-weight: 700; }
   .sec.later { opacity: .85; }
   .meta { font-size: 13px; color: var(--muted); margin-top: 6px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }

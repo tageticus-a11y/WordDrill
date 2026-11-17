@@ -14,7 +14,7 @@ import { createVersions } from './versions.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '9';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '10';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -274,13 +274,10 @@ function sectionPicker(path, section, card, index) {
 
 function cardView(card, { path, section, actions = [], meta, editable = true }) {
   if (editing && editing.path === path && editing.id === card.id) return renderEditor();
-  const body = h('div', { class: 'md' + (editable ? ' editable' : '') });
+  // Read-only: the text is there to select and copy; ✎ Edit (next to the main button) opens the editor
+  const body = h('div', { class: 'md' });
   body.append(toDom(card.body));
-  if (editable) body.addEventListener('click', ev => {
-    if (String(getSelection())) return;   // selecting text to copy, not editing
-    ev.preventDefault();
-    startEdit(path, section, card);
-  });
+  if (editable) actions = [...actions.slice(0, 1), btn('✎ Edit', () => startEdit(path, section, card), 'edit'), ...actions.slice(1)];
   return h('article', { class: 'card', 'data-id': card.id }, body,
     meta ? h('div', { class: 'meta', text: meta }) : null,
     actions.length ? h('div', { class: 'actions' }, actions) : null);
@@ -304,7 +301,7 @@ function renderList(path) {
       reminder(date), preparedReminder()];
   }
   const out = [isToday ? dateLine()
-    : h('p', { class: 'date', text: 'Next cards, top first. ✓ Remembered in Today brings the top card of the same section into Today.' })];
+    : h('p', { class: 'date', text: 'Next cards, top first. ✓ (Remembered) in Today brings the top card of the same section into Today.' })];
   if (isToday) out.push(recallBar('today'));
   for (const sec of sectionsOf(doc)) {
     const ids = sec.cards.map(c => c.id);
@@ -313,10 +310,10 @@ function renderList(path) {
       const swap = j => { const n = ids.slice(); [n[i], n[j]] = [n[j], n[i]]; commit(orderOp(path, sec.name, n)); };
       const more = menuFor === card.id;
       const main = isToday
-        ? btn('✓ Remembered', ev => leave(ev, () => {
+        ? h('button', { type: 'button', class: 'primary remember', title: 'Remembered', 'aria-label': 'Remembered', onclick: ev => leave(ev, () => {
           const plan = rememberPlan(engine.doc(CURRENT), engine.doc(PREPARED), sec.name, card, date, target);
           commit(plan.ops, 'Moved to ' + weekday(date).name + '’s check.' + (plan.refill ? ' Next card added from Prepared.' : ''), plan.undo);
-        }), 'primary')
+        }) }, '✓')
         : btn('← Today', ev => leave(ev, () => commit(toTodayOp(sec.name, card, date), 'Moved to Today.', moveOp(CURRENT, PREPARED, sec.name, card, {}, i)), 'left'), 'primary');
       const actions = [main, btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')];
       if (more) actions.push(h('span', { class: 'more' },
@@ -582,7 +579,7 @@ function renderSettings() {
   const targets = targetsOf(engine.state());
   return [
     h('section', { class: 'sec' }, h('h2', { text: 'Cards per day' }),
-      h('p', { class: 'note', text: 'How many cards each section keeps in Today. ✓ Remembered tops a section up from Prepared to this number; Prepared warns when it holds less than this.' }),
+      h('p', { class: 'note', text: 'How many cards each section keeps in Today. ✓ (Remembered) tops a section up from Prepared to this number; Prepared warns when it holds less than this.' }),
       h('div', { class: 'targets' }, SECTIONS.map(({ name }) => h('label', {}, h('span', { text: name }),
         h('select', { 'aria-label': name + ' cards per day', onchange: ev => commit(stateOp('targets', { ...targetsOf(engine.state()), [name]: +ev.target.value })) },
           [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => h('option', { value: v, selected: v === targets[name] }, String(v)))))))),
