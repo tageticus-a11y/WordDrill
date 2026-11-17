@@ -129,6 +129,10 @@ export function mountTimer({ button, panel, store, settings }) {
     mini.set(idle ? 0 : v.progress, color);
     miniText.textContent = idle ? '⏱' : String(v.cyclesLeft);
     button.classList.toggle('running', v.running);
+    // The page knows the cycle colour too: the Recall boxes take it, so there's no need to look up at the ring
+    const root = document.documentElement;
+    root.classList.toggle('timer-running', v.running);
+    if (v.running) root.style.setProperty('--timer-color', color);
     button.classList.toggle('on', open);
     const key = settings().shortcut ? shortcutLabel(settings().shortcut) : '';
     button.title = v.running

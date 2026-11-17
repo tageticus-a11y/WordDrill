@@ -16,7 +16,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, DEFAULT_SHORTCUT 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '14';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '15';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
