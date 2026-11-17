@@ -57,7 +57,8 @@ function play(name) { const c = audioCtx(); if (c) try { SOUNDS[name](c); } catc
 // ---- Vibration ----
 // The Vibration API where there is one (Android Chrome). iPhones have none: the old haptic trick (a script
 // click on an <input switch>) was closed in iOS 26.5, so Vibrate isn't offered there. Pulses: 1 / 2 / 3.
-const CAN_VIBRATE = typeof navigator.vibrate === 'function';
+// Desktop Chrome has navigator.vibrate too (with nothing to vibrate): touch devices only
+const CAN_VIBRATE = typeof navigator.vibrate === 'function' && matchMedia('(pointer: coarse)').matches;
 const PULSES = { odd: 1, even: 2, final: 3 };
 function vibrate(name) {
   if (!CAN_VIBRATE) return;
