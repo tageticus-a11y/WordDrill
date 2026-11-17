@@ -6,11 +6,11 @@ export const CYCLE_MS = 10000;
 export const DEFAULT_TOTAL = 21;
 const SECONDS = CYCLE_MS / 1000;
 
-const clampTotal = n => Math.max(1, Math.min(999, Math.round(Number(n)) || DEFAULT_TOTAL));
+export const clampTotal = n => Math.max(1, Math.min(999, Math.round(Number(n)) || DEFAULT_TOTAL));
 
-/** A saved state, or a fresh one (anything broken is replaced) */
-export function timerState(saved) {
-  if (!saved || typeof saved !== 'object') return { total: DEFAULT_TOTAL, startAt: null, elapsed: 0 };
+/** A saved state, or a fresh one of `cycles` (anything broken is replaced) */
+export function timerState(saved, cycles = DEFAULT_TOTAL) {
+  if (!saved || typeof saved !== 'object') return { total: clampTotal(cycles), startAt: null, elapsed: 0 };
   return {
     total: clampTotal(saved.total),
     startAt: Number.isFinite(saved.startAt) ? saved.startAt : null,
@@ -55,4 +55,37 @@ export function cycleEnds(s, from, to) {
     out.push({ n, at: n * CYCLE_MS, sound: n === s.total ? 'final' : n % 2 ? 'odd' : 'even' });
   }
   return out;
+}
+
+/* ---- Settings (state.json "timer": { cycles, shortcut }) ---- */
+
+export const DEFAULT_SHORTCUT = 'Alt+KeyT';
+
+/** Timer settings from state.json; shortcut '' means none */
+export function timerSettings(state) {
+  const t = (state && typeof state.timer === 'object' && state.timer) || {};
+  return {
+    cycles: t.cycles == null ? DEFAULT_TOTAL : clampTotal(t.cycles),
+    shortcut: typeof t.shortcut === 'string' ? t.shortcut : DEFAULT_SHORTCUT
+  };
+}
+
+const MODIFIER_CODE = /^(Control|Alt|Shift|Meta|OS)(Left|Right)?$/;
+/**
+ * A key press as a shortcut: "Ctrl+Alt+Shift+Meta+<code>" (only the modifiers held; KeyboardEvent.code,
+ * so it doesn't depend on the keyboard layout, e.g. Armenian or Russian).
+ * null: only a modifier is pressed so far. '' : not allowed (needs Ctrl, Alt or Win/Cmd, unless it is an F key).
+ */
+export function shortcutOf(ev) {
+  if (!ev.code || MODIFIER_CODE.test(ev.code)) return null;
+  const mods = [ev.ctrlKey && 'Ctrl', ev.altKey && 'Alt', ev.shiftKey && 'Shift', ev.metaKey && 'Meta'].filter(Boolean);
+  if (!/^F\d{1,2}$/.test(ev.code) && !mods.some(m => m !== 'Shift')) return '';
+  return [...mods, ev.code].join('+');
+}
+export const matchesShortcut = (ev, shortcut) => !!shortcut && shortcutOf(ev) === shortcut;
+
+/** "Alt+KeyT" → "Alt+T", "Ctrl+Shift+Digit1" → "Ctrl+Shift+1" */
+export function shortcutLabel(shortcut) {
+  if (!shortcut) return 'None';
+  return shortcut.split('+').map(p => p === 'Meta' ? 'Win/Cmd' : p.replace(/^Key([A-Z])$/, '$1').replace(/^Digit(\d)$/, '$1').replace(/^Numpad/, 'Num ')).join('+');
 }

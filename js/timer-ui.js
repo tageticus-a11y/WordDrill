@@ -1,9 +1,10 @@
 // The recall timer on the page (browser only): a small ring in the header that opens a panel with the big
-// ring, the cycle count and Start/Pause/Reset, like the CountDown page. Alt+T starts or pauses it.
+// ring, the cycle count and Start/Pause/Reset, like the CountDown page. A keyboard shortcut (Alt+T unless
+// changed in Settings) starts or pauses it.
 // Sounds are made with Web Audio (a ding at the end of each cycle, two pitches in turn, three beeps at the end),
 // plus vibration where the device can (Vibrate, on by default; not on iPhone, see vibrate()).
 
-import { timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, elapsedOf } from './timer.js';
+import { timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, elapsedOf, matchesShortcut, shortcutLabel } from './timer.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const COLORS = ['var(--alert)', 'var(--ok)'];    // cycles in turn: red, green
@@ -66,8 +67,9 @@ function vibrate(name) {
   navigator.vibrate(name === 'final' ? [250, 120, 250, 120, 500] : Array.from({ length: n * 2 - 1 }, (_, i) => (i % 2 ? 90 : 120)));
 }
 
-export function mountTimer({ button, panel, store }) {
-  let s = timerState(store.get('wd.timer'));
+// settings(): { cycles, shortcut } from Settings (state.json). Returns { refresh } to call when they change.
+export function mountTimer({ button, panel, store, settings }) {
+  let s = timerState(store.get('wd.timer'), settings().cycles);
   let open = store.get('wd.timerOpen') === true;
   let last = elapsedOf(s, Date.now());
   let loop = null;
@@ -90,7 +92,7 @@ export function mountTimer({ button, panel, store }) {
   vib.checked = buzz;
   vib.addEventListener('change', () => { buzz = vib.checked; store.set('wd.timerVibrate', buzz); if (buzz) vibrate('odd'); });
   const startBtn = el('button', { type: 'button', class: 'primary', onclick: () => toggle() });
-  const resetBtn = el('button', { type: 'button', text: 'Reset', onclick: () => { s = resetTimer(s); last = 0; save(); stopLoop(); draw(); } });
+  const resetBtn = el('button', { type: 'button', text: 'Reset', onclick: () => { s = resetTimer(s, settings().cycles); last = 0; save(); stopLoop(); draw(); } });
   panel.append(
     el('div', { class: 'timer-ring' }, big.svg, secs),
     el('div', { class: 'timer-side' },
@@ -115,7 +117,7 @@ export function mountTimer({ button, panel, store }) {
     if (s.startAt != null) {
       const ends = cycleEnds(s, last, e), end = ends[ends.length - 1];
       if (end && e - end.at < 2000) signal(end.sound);   // not a pile of old dings after the app was in the background
-      if (timerView(s, now).done) { s = resetTimer(s); save(); stopLoop(); last = 0; draw(); return; }
+      if (timerView(s, now).done) { s = resetTimer(s, settings().cycles); save(); stopLoop(); last = 0; draw(); return; }
     }
     last = e;
     draw();
@@ -128,7 +130,10 @@ export function mountTimer({ button, panel, store }) {
     miniText.textContent = idle ? '⏱' : String(v.cyclesLeft);
     button.classList.toggle('running', v.running);
     button.classList.toggle('on', open);
-    button.title = v.running ? 'Timer: cycle ' + v.cycle + ' of ' + v.total + ' (Alt+T pauses)' : 'Timer (Alt+T starts)';
+    const key = settings().shortcut ? shortcutLabel(settings().shortcut) : '';
+    button.title = v.running
+      ? 'Timer: cycle ' + v.cycle + ' of ' + v.total + (key ? ' (' + key + ' pauses)' : '')
+      : 'Timer' + (key ? ' (' + key + ' starts)' : '');
     panel.hidden = !open;
     if (!open) return;
     big.set(v.progress, color);
@@ -141,9 +146,17 @@ export function mountTimer({ button, panel, store }) {
 
   button.addEventListener('click', () => setOpen(!open));
   document.addEventListener('keydown', ev => {
-    if (ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey && ev.code === 'KeyT') { ev.preventDefault(); toggle(); }
+    if (matchesShortcut(ev, settings().shortcut)) { ev.preventDefault(); toggle(); }
   });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') tick(); });
   if (timerView(s, Date.now()).running) startLoop(); else if (s.startAt != null) tick();   // finished while closed
   draw();
+  return {
+    // Settings changed (here or on another device): an idle timer takes the new number of cycles
+    refresh() {
+      const cycles = settings().cycles;
+      if (s.startAt == null && s.elapsed === 0 && s.total !== cycles) { s = resetTimer(s, cycles); save(); }
+      draw();
+    }
+  };
 }

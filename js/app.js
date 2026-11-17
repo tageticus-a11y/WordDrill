@@ -12,10 +12,11 @@ import {
 } from './ops.js';
 import { createVersions } from './versions.js';
 import { mountTimer } from './timer-ui.js';
+import { timerSettings, clampTotal, shortcutOf, shortcutLabel, DEFAULT_SHORTCUT } from './timer.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '13';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '14';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -47,6 +48,8 @@ let renderPending = false;
 let showLater = false;
 const revealed = new Set();                 // Weekly check: cards whose answer is shown (collapsed by default)
 let animateNext = false;                    // the next render slides cards to their new places
+let timer = null;                           // the header timer (js/timer-ui.js)
+let recordingShortcut = false;              // Settings: waiting for the new timer shortcut
 
 // Recall: cards typed from memory (this browser only, for today) before a list is shown. Two lists:
 // 'today' (Today's cards) and 'check' (the weekly check). A list is hidden at the start of a session,
@@ -584,6 +587,7 @@ function renderSettings() {
       h('div', { class: 'targets' }, SECTIONS.map(({ name }) => h('label', {}, h('span', { text: name }),
         h('select', { 'aria-label': name + ' cards per day', onchange: ev => commit(stateOp('targets', { ...targetsOf(engine.state()), [name]: +ev.target.value })) },
           [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => h('option', { value: v, selected: v === targets[name] }, String(v)))))))),
+    timerSettingsView(),
     promptSettings(),
     h('section', { class: 'sec' }, h('h2', { text: 'Dropbox' }),
       h('p', { text: 'Cards are Markdown files in Dropbox → Apps → WordDrill.' }),
@@ -597,6 +601,27 @@ function renderSettings() {
   ];
 }
 
+// state.json "timer": other keys there are kept
+function saveTimerSettings(patch, message) {
+  const old = engine.state().timer;
+  commit(stateOp('timer', { ...(old && typeof old === 'object' ? old : {}), ...patch }), message, stateOp('timer', old ?? null));
+}
+function timerSettingsView() {
+  const t = timerSettings(engine.state());
+  const cycles = h('input', { type: 'number', min: '1', max: '999', inputmode: 'numeric', value: String(t.cycles), 'aria-label': 'Cycles by default',
+    onchange: ev => saveTimerSettings({ cycles: clampTotal(ev.target.value) }, 'Timer: ' + clampTotal(ev.target.value) + ' cycles by default.') });
+  return h('section', { class: 'sec' }, h('h2', { text: 'Timer' }),
+    h('p', { class: 'note', text: 'Cycles of 10 seconds. The timer starts with this number after Reset or when it finishes; the timer panel can change it for one run.' }),
+    h('label', { class: 'setting' }, h('span', { text: 'Cycles by default' }), cycles),
+    h('div', { class: 'setting' }, h('span', { text: 'Start / pause shortcut' }),
+      recordingShortcut
+        ? [h('strong', { text: 'Press the new keys…' }), btn('Cancel', () => { recordingShortcut = false; render(); }, 'link')]
+        : [h('kbd', { text: shortcutLabel(t.shortcut) }),
+          btn('Change', () => { recordingShortcut = true; render(); }),
+          t.shortcut ? btn('Turn off', () => saveTimerSettings({ shortcut: '' }, 'Timer shortcut turned off.'), 'link') : null,
+          t.shortcut !== DEFAULT_SHORTCUT ? btn('Default (' + shortcutLabel(DEFAULT_SHORTCUT) + ')', () => saveTimerSettings({ shortcut: DEFAULT_SHORTCUT }, 'Timer shortcut: ' + shortcutLabel(DEFAULT_SHORTCUT) + '.'), 'link') : null]),
+    h('p', { class: 'note', text: 'For the keyboard on a computer. Hold Ctrl, Alt or Win/Cmd with a key, or use an F key. Browser shortcuts such as Ctrl+T or Ctrl+W can’t be used. Saved in Dropbox, so all your devices use these.' }));
+}
 function promptSettings() {
   const saved = engine.state().aiPrompt ?? null;
   const t = h('textarea', { class: 'prompt', rows: 12, spellcheck: 'true', 'aria-label': 'AI check prompt' });
@@ -618,7 +643,7 @@ function setTab(t) {
   autoSave();
   // Filling Prepared, then back to type today's cards: Today and the weekly check are hidden again
   if (t === 'prepared') { hideList('today'); hideList('check'); }
-  tab = t; store.set('wd.tab', t); menuFor = null;
+  tab = t; store.set('wd.tab', t); menuFor = null; recordingShortcut = false;
   render();
   window.scrollTo(0, 0);
 }
@@ -636,6 +661,7 @@ function render() {
   const view = { today: () => renderList(CURRENT), prepared: () => renderList(PREPARED), check: renderCheck, archive: renderArchive, settings: renderSettings }[tab] || (() => renderList(CURRENT));
   $('#view').replaceChildren(...[view()].flat().filter(Boolean));
   if (animate) playMoves(before);
+  if (timer) timer.refresh();   // timer settings may have changed (here or synced)
   if (focusRecall) {
     const t = document.querySelector('.recall textarea[data-rid="' + focusRecall + '"]');
     focusRecall = null;
@@ -650,7 +676,18 @@ function render() {
 
 /* ============ Start ============ */
 function wire() {
-  mountTimer({ button: $('#timerBtn'), panel: $('#timerPanel'), store });
+  timer = mountTimer({ button: $('#timerBtn'), panel: $('#timerPanel'), store, settings: () => timerSettings(engine.state()) });
+  // Settings → Timer → Change: the next key combination becomes the shortcut (before any other key handling)
+  window.addEventListener('keydown', ev => {
+    if (!recordingShortcut) return;
+    ev.preventDefault(); ev.stopPropagation();
+    if (ev.key === 'Escape') { recordingShortcut = false; render(); return; }
+    const sc = shortcutOf(ev);
+    if (sc === null) return;   // only a modifier so far
+    if (!sc) { toast('Hold Ctrl, Alt or Win/Cmd with the key, or use an F key.'); return; }
+    recordingShortcut = false;
+    saveTimerSettings({ shortcut: sc }, 'Timer shortcut: ' + shortcutLabel(sc) + '.');
+  }, true);
   document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
   $('#loginRedirect').addEventListener('click', () => dbx.startLogin(true).catch(handleErr));
   $('#loginCode').addEventListener('click', () => dbx.startLogin(false).catch(handleErr));

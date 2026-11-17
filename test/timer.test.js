@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CYCLE_MS, timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds } from '../js/timer.js';
+import { CYCLE_MS, timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, timerSettings, shortcutOf, matchesShortcut, shortcutLabel } from '../js/timer.js';
 
 test('fresh and broken saved states', () => {
   assert.deepEqual(timerState(null), { total: 21, startAt: null, elapsed: 0 });
@@ -48,4 +48,30 @@ test('cycle ends for the sounds: odd, even, final', () => {
   assert.deepEqual(cycleEnds(s, 10500, 19000), []);
   assert.deepEqual(cycleEnds(s, 0, 99999).map(e => [e.n, e.sound]), [[1, 'odd'], [2, 'even'], [3, 'final']]);
   assert.deepEqual(cycleEnds(timerState({ total: 1 }), 0, 10000).map(e => e.sound), ['final']);
+});
+
+test('timer settings from state.json', () => {
+  assert.deepEqual(timerSettings({}), { cycles: 21, shortcut: 'Alt+KeyT' });
+  assert.deepEqual(timerSettings({ timer: { cycles: 12, shortcut: '' } }), { cycles: 12, shortcut: '' });
+  assert.deepEqual(timerSettings({ timer: { cycles: 'x', shortcut: 5 } }), { cycles: 21, shortcut: 'Alt+KeyT' });
+  assert.deepEqual(timerSettings({ timer: null }), { cycles: 21, shortcut: 'Alt+KeyT' });
+  assert.equal(timerState(null, 12).total, 12);
+});
+
+test('shortcuts from key presses', () => {
+  const key = (code, mods = {}) => ({ code, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods });
+  assert.equal(shortcutOf(key('KeyT', { altKey: true })), 'Alt+KeyT');
+  assert.equal(shortcutOf(key('Digit1', { ctrlKey: true, shiftKey: true })), 'Ctrl+Shift+Digit1');
+  assert.equal(shortcutOf(key('F2')), 'F2');
+  assert.equal(shortcutOf(key('ShiftLeft', { shiftKey: true })), null);      // still choosing
+  assert.equal(shortcutOf(key('AltRight', { altKey: true })), null);
+  assert.equal(shortcutOf(key('KeyT')), '');                                // would fire while typing
+  assert.equal(shortcutOf(key('KeyT', { shiftKey: true })), '');
+  assert.ok(matchesShortcut(key('KeyT', { altKey: true }), 'Alt+KeyT'));
+  assert.ok(!matchesShortcut(key('KeyT', { altKey: true, shiftKey: true }), 'Alt+KeyT'));
+  assert.ok(!matchesShortcut(key('KeyT', { altKey: true }), ''));
+  assert.equal(shortcutLabel('Alt+KeyT'), 'Alt+T');
+  assert.equal(shortcutLabel('Ctrl+Shift+Digit1'), 'Ctrl+Shift+1');
+  assert.equal(shortcutLabel('Meta+Space'), 'Win/Cmd+Space');
+  assert.equal(shortcutLabel(''), 'None');
 });
