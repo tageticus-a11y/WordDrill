@@ -70,6 +70,27 @@
   @keyframes blink { 50% { background: var(--alert-tint); color: var(--alert); } }
   @media (prefers-reduced-motion: reduce) { nav button.blink { animation: none; background: var(--alert-tint); color: var(--alert); } }
 
+  /* Recall timer: a small ring in the header, a panel under the title */
+  .timer-btn { display: inline-flex; align-items: center; justify-content: center; position: relative; padding: 2px; min-width: 40px; }
+  .timer-btn svg { display: block; }
+  .timer-btn .track, .timer-panel .track { stroke: var(--rule); }
+  .timer-btn circle { transition: stroke-dashoffset .2s linear; }
+  .timer-mini-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--muted); }
+  .timer-btn.running .timer-mini-text { color: var(--ink); }
+  .timer-panel { position: relative; display: flex; gap: 16px; align-items: center; margin: 8px 0 2px; padding: 10px 44px 10px 12px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); }
+  .timer-ring { position: relative; flex: none; width: 96px; height: 96px; }
+  .timer-ring svg { display: block; }
+  .timer-ring circle { transition: stroke-dashoffset .2s linear, stroke .3s ease; }
+  .timer-secs { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .timer-side { display: grid; gap: 6px; min-width: 0; }
+  .timer-cycle { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .timer-total { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .timer-total input { width: 72px; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; padding: 3px 8px; font-size: 16px; }
+  .timer-vibrate { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .timer-vibrate input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+  .timer-buttons { display: flex; gap: 8px; }
+  .timer-buttons button { min-width: 76px; }
+  .timer-close { position: absolute; top: 6px; right: 6px; border: 0; background: none; color: var(--muted); }
   .date { color: var(--muted); margin: 14px 0 0; font-size: 15px; }
   .sec { margin: 18px 0 8px; }
   .sec h2 { font-size: 19px; margin: 0 0 8px; color: var(--accent); display: flex; align-items: baseline; gap: 8px; }
@@ -196,8 +217,10 @@
       <div class="titlebar">
         <h1>WordDrill</h1>
         <span id="sync" role="status"></span>
+        <button type="button" id="timerBtn" class="icon timer-btn" aria-label="Timer"></button>
         <button type="button" class="icon" data-tab="settings" title="Settings" aria-label="Settings">⚙</button>
       </div>
+      <div id="timerPanel" class="timer-panel" hidden></div>
       <nav>
         <button type="button" data-tab="today">Today</button>
         <button type="button" data-tab="check">Weekly check<span id="checkBadge" class="badge" hidden></span></button>

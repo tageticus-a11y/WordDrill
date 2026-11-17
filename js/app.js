@@ -11,10 +11,11 @@ import {
   findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp
 } from './ops.js';
 import { createVersions } from './versions.js';
+import { mountTimer } from './timer-ui.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '10';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '11';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -649,6 +650,7 @@ function render() {
 
 /* ============ Start ============ */
 function wire() {
+  mountTimer({ button: $('#timerBtn'), panel: $('#timerPanel'), store });
   document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
   $('#loginRedirect').addEventListener('click', () => dbx.startLogin(true).catch(handleErr));
   $('#loginCode').addEventListener('click', () => dbx.startLogin(false).catch(handleErr));
@@ -667,6 +669,7 @@ function wire() {
   // A click anywhere outside the open editor saves it first; the click then does what it was for
   // (its handlers still run, even though the page was redrawn).
   document.addEventListener('click', ev => {
+    if (!ev.isTrusted) return;   // not a real tap (e.g. the timer's haptic tick on iPhone)
     if (editing && !(ev.target.closest && ev.target.closest('.editor'))) autoSave();
   }, true);
   window.addEventListener('online', sync);

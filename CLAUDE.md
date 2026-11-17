@@ -26,6 +26,11 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
   - Weekly check: typed something → the cards open fully; skipped → each card starts collapsed.
   - Typed cards live **only in this browser** (localStorage `wd.recall` / `wd.recallCheck` = {date, items, shown}); a new day starts empty. Never written to Dropbox.
   - "Copy for AI check" copies `buildCheckText` (`js/recall.js`): the prompt with `{typed}` and `{cards}` replaced (lists appended if a placeholder is missing). The prompt is `aiPrompt` in state.json, edited in Settings; null or empty means `DEFAULT_CHECK_PROMPT`.
+- **Recall timer** (like the user's CountDownPage Chrome extension, `../CountDownPage`): cycles of 10 s (21 by default), a ring that fills each cycle, red and green in turn.
+  - A small ring in the header (cycles left; ⏱ when idle) opens a panel under the title: big ring with the seconds, "Cycle n / N", number of cycles, Vibrate, Start/Pause/Resume, Reset. Alt+T starts or pauses (the extension's Ctrl+Shift+1 is global, so not reused).
+  - Signals: start = "even"; each cycle end alternates "odd"/"even" dings; the last one is "final" (three beeps), then the timer resets. Sounds are synthesized with Web Audio (no mp3s from the extension in the public repo); a ding older than 2 s (app was in the background) isn't played.
+  - Vibrate (on by default, localStorage `wd.timerVibrate`): `navigator.vibrate` where it exists; on iPhone (no Vibration API, silent switch invisible to pages) a click on a hidden `<input type=checkbox switch>` label gives a haptic tick (iOS 18+). Web Audio is muted by the silent switch, so a silent iPhone only ticks. 1/2/3 pulses for odd/even/final. The focus is given back after the click, and the document click autosave ignores untrusted clicks, so a tick never closes an open card.
+  - State in localStorage `wd.timer` = {total, startAt, elapsed} with wall-clock times: survives reloads and tab switches. Logic in `js/timer.js` (pure, tested), UI in `js/timer-ui.js`.
 - **Prepared** (`prepared.md`): the user prepares the next portion of cards each day. It works like Today: add, edit, up/down, delete.
 - **Cards are read-only** (the user mostly copies text from them). A tap on the text does nothing; **✎ Edit**, right after the main button on every editable card (Today, Prepared, Weekly check), opens the editor. Saving is unchanged (Save, Ctrl+Enter, or autosave when the focus leaves), and the card is read-only again. The Recall boxes are always editable. Today's main button is a bare **✓** (title "Remembered").
 - **✓ Remembered** moves a card to today's weekday file, and the cards below it move up. If the section is then below its target, the **top** Prepared card of the same section joins Today at the bottom, with meta `started=date`. If Today had more cards than the target, nothing is refilled. See `rememberPlan` in `ops.js`; its Undo restores both cards.
@@ -117,6 +122,7 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - `hdr()` escapes non-ASCII characters in `Dropbox-API-Arg`. Armenian paths would break without it.
   - The app key is in `DROPBOX_APP_KEY`; it is public by design.
 - `recall.js` (pure): `recallFor`, `typedTexts`, `promptOf`, `buildCheckText`, `DEFAULT_CHECK_PROMPT`.
+- `timer.js` (pure): `timerState`, `timerView`, `startTimer` / `pauseTimer` / `resetTimer` / `setTotal`, `cycleEnds`. `timer-ui.js`: `mountTimer({button, panel, store})`.
 - `demo.js`: `?demo` in the URL uses a fake Dropbox kept in localStorage (`demo.files`, `demo.data`). Use it for UI testing without touching real data.
 - `app.js`: the UI (tabs Today / Weekly check / Archive / Settings).
   - **Every change** goes through `commit(ops, message, undoOps)` (each argument is one op or a list) → `engine.add` → render → `flush` after 600 ms.
