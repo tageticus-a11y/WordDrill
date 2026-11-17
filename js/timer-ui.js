@@ -1,5 +1,5 @@
 // The recall timer on the page (browser only): a small ring in the header that opens a panel with the big
-// ring, the cycle count and Start/Pause/Reset, like the CountDown page. A keyboard shortcut (Alt+T unless
+// ring, the cycle count and Start/Pause/Reset, like the CountDown page. A keyboard shortcut (Alt+B unless
 // changed in Settings) starts or pauses it.
 // Sounds are made with Web Audio (a ding at the end of each cycle, two pitches in turn, three beeps at the end),
 // plus vibration where the device can (Vibrate, on by default; not on iPhone, see vibrate()).
@@ -70,7 +70,7 @@ function vibrate(name) {
 // settings(): { cycles, shortcut } from Settings (state.json). Returns { refresh } to call when they change.
 export function mountTimer({ button, panel, store, settings }) {
   let s = timerState(store.get('wd.timer'), settings().cycles);
-  let open = store.get('wd.timerOpen') === true;
+  let open = store.get('wd.timerOpen') !== false;   // open unless closed with ✕
   let last = elapsedOf(s, Date.now());
   let loop = null;
   const save = () => store.set('wd.timer', s);
@@ -83,7 +83,7 @@ export function mountTimer({ button, panel, store, settings }) {
   button.append(mini.svg, miniText);
 
   // Panel
-  const big = ring(96, 8);
+  const big = ring(56, 6);
   const secs = el('span', { class: 'timer-secs' });
   const cycleText = el('div', { class: 'timer-cycle' });
   const total = el('input', { type: 'number', min: '1', max: '999', inputmode: 'numeric', 'aria-label': 'Number of cycles' });
@@ -97,7 +97,7 @@ export function mountTimer({ button, panel, store, settings }) {
     el('div', { class: 'timer-ring' }, big.svg, secs),
     el('div', { class: 'timer-side' },
       cycleText,
-      el('label', { class: 'timer-total' }, el('span', { text: 'Cycles of 10 s' }), total),
+      el('label', { class: 'timer-total' }, el('span', { text: 'Cycles' }), total),
       CAN_VIBRATE ? el('label', { class: 'timer-vibrate' }, vib, el('span', { text: 'Vibrate' })) : '',
       el('div', { class: 'timer-buttons' }, startBtn, resetBtn)),
     el('button', { type: 'button', class: 'icon timer-close', title: 'Close', 'aria-label': 'Close timer', text: '✕', onclick: () => setOpen(false) }));

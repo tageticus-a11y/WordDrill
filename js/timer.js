@@ -59,7 +59,7 @@ export function cycleEnds(s, from, to) {
 
 /* ---- Settings (state.json "timer": { cycles, shortcut }) ---- */
 
-export const DEFAULT_SHORTCUT = 'Alt+KeyT';
+export const DEFAULT_SHORTCUT = 'Alt+KeyB';
 
 /** Timer settings from state.json; shortcut '' means none */
 export function timerSettings(state) {

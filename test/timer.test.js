@@ -51,10 +51,10 @@ test('cycle ends for the sounds: odd, even, final', () => {
 });
 
 test('timer settings from state.json', () => {
-  assert.deepEqual(timerSettings({}), { cycles: 21, shortcut: 'Alt+KeyT' });
+  assert.deepEqual(timerSettings({}), { cycles: 21, shortcut: 'Alt+KeyB' });
   assert.deepEqual(timerSettings({ timer: { cycles: 12, shortcut: '' } }), { cycles: 12, shortcut: '' });
-  assert.deepEqual(timerSettings({ timer: { cycles: 'x', shortcut: 5 } }), { cycles: 21, shortcut: 'Alt+KeyT' });
-  assert.deepEqual(timerSettings({ timer: null }), { cycles: 21, shortcut: 'Alt+KeyT' });
+  assert.deepEqual(timerSettings({ timer: { cycles: 'x', shortcut: 5 } }), { cycles: 21, shortcut: 'Alt+KeyB' });
+  assert.deepEqual(timerSettings({ timer: null }), { cycles: 21, shortcut: 'Alt+KeyB' });
   assert.equal(timerState(null, 12).total, 12);
 });
 

@@ -27,8 +27,8 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
   - Typed cards live **only in this browser** (localStorage `wd.recall` / `wd.recallCheck` = {date, items, shown}); a new day starts empty. Never written to Dropbox.
   - "Copy for AI check" copies `buildCheckText` (`js/recall.js`): the prompt with `{typed}` and `{cards}` replaced (lists appended if a placeholder is missing). The prompt is `aiPrompt` in state.json, edited in Settings; null or empty means `DEFAULT_CHECK_PROMPT`.
 - **Recall timer** (like the user's CountDownPage Chrome extension, `../CountDownPage`): cycles of 10 s (21 by default), a ring that fills each cycle, red and green in turn.
-  - A small ring in the header (cycles left; ⏱ when idle) opens a panel under the title: big ring with the seconds, "Cycle n / N", number of cycles, Vibrate (where possible), Start/Pause/Resume, Reset. A keyboard shortcut starts or pauses (default Alt+T; the extension's Ctrl+Shift+1 is global in Chrome).
-  - Settings → Timer (state.json `timer` = {cycles, shortcut}, synced): "Cycles by default" (used for a fresh timer, after Reset and after it finishes; an idle timer takes a new value at once via `timer.refresh()` in `render()`; the panel can change it for one run) and the shortcut. "Change" records the next key combination (`shortcutOf`: modifiers + `KeyboardEvent.code`, layout-independent; Ctrl, Alt or Win/Cmd required except for F keys; Esc cancels); "Turn off" stores ''; "Default" goes back to Alt+T.
+  - A small ring in the header (cycles left; ⏱ when idle) opens a compact panel under the title (open by default; ✕ closes it, remembered in `wd.timerOpen`): ring with the seconds, "Cycle n / N", number of cycles, Vibrate (where possible), Start/Pause/Resume, Reset. A keyboard shortcut starts or pauses (default Alt+B; the extension's Ctrl+Shift+1 is global in Chrome).
+  - Settings → Timer (state.json `timer` = {cycles, shortcut}, synced): "Cycles by default" (used for a fresh timer, after Reset and after it finishes; an idle timer takes a new value at once via `timer.refresh()` in `render()`; the panel can change it for one run) and the shortcut. "Change" records the next key combination (`shortcutOf`: modifiers + `KeyboardEvent.code`, layout-independent; Ctrl, Alt or Win/Cmd required except for F keys; Esc cancels); "Turn off" stores ''; "Default" goes back to Alt+B. The same recorder (`SHORTCUTS` / `shortcutSetting` in app.js) sets the **Copy for AI check** shortcut (state.json `aiShortcut`, default Ctrl+Shift+1, `copyShortcutOf` in recall.js): it copies the Weekly check lists on that tab, Today's anywhere else. Two actions can't share one shortcut.
   - Signals: start = "even"; each cycle end alternates "odd"/"even" dings; the last one is "final" (three beeps), then the timer resets. Sounds are synthesized with Web Audio (no mp3s from the extension in the public repo); a ding older than 2 s (app was in the background) isn't played.
   - Vibrate (on by default, localStorage `wd.timerVibrate`): `navigator.vibrate` on a touch device (`pointer: coarse`) only, so the option shows only on phones that can (Android); desktop Chrome has `navigator.vibrate` too, with nothing to vibrate. iPhones can't vibrate from a web page: the `<input switch>` haptic trick works only on a real tap since iOS 26.5 (tried in v11, removed). The silent switch mutes the Web Audio sounds on the speaker, not in headphones.
   - While it runs, `<html>` has class `timer-running` and `--timer-color` (the cycle colour); the Recall boxes take that colour (border and a tint), so the user sees each cycle change without looking at the ring.
@@ -53,7 +53,7 @@ current.md                     cards being learned now (Today)
 prepared.md                    next cards, top first (Prepared)
 week/1-mon.md … week/7-sun.md  remembered on that weekday; due when meta.moved < today (or no moved)
 archive/<section-key>/YYYY-MM.md  passed the check; one file per section per month (key: armenian/english/general)
-state.json                     { "targets": { "Armenian": 2, ... }, "aiPrompt": "…" | null, "timer": { "cycles": 21, "shortcut": "Alt+KeyT" } }   (old "weekCheckDone" is ignored and kept)
+state.json                     { "targets": { "Armenian": 2, ... }, "aiPrompt": "…" | null, "aiShortcut": "Ctrl+Shift+Digit1", "timer": { "cycles": 21, "shortcut": "Alt+KeyB" } }   (old "weekCheckDone" is ignored and kept)
 ```
 Later releases add `flow/` and `queue/` next to these.
 
@@ -123,7 +123,7 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - The `list` / `download` / `upload` API.
   - `hdr()` escapes non-ASCII characters in `Dropbox-API-Arg`. Armenian paths would break without it.
   - The app key is in `DROPBOX_APP_KEY`; it is public by design.
-- `recall.js` (pure): `recallFor`, `typedTexts`, `promptOf`, `buildCheckText`, `DEFAULT_CHECK_PROMPT`.
+- `recall.js` (pure): `recallFor`, `typedTexts`, `promptOf`, `buildCheckText`, `DEFAULT_CHECK_PROMPT`, `copyShortcutOf`.
 - `timer.js` (pure): `timerState`, `timerView`, `startTimer` / `pauseTimer` / `resetTimer` / `setTotal`, `cycleEnds`, `timerSettings`, `shortcutOf` / `matchesShortcut` / `shortcutLabel`. `timer-ui.js`: `mountTimer({button, panel, store, settings})` → `{refresh}`.
 - `demo.js`: `?demo` in the URL uses a fake Dropbox kept in localStorage (`demo.files`, `demo.data`). Use it for UI testing without touching real data.
 - `app.js`: the UI (tabs Today / Weekly check / Archive / Settings).

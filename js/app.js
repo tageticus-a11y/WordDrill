@@ -12,11 +12,11 @@ import {
 } from './ops.js';
 import { createVersions } from './versions.js';
 import { mountTimer } from './timer-ui.js';
-import { timerSettings, clampTotal, shortcutOf, shortcutLabel, DEFAULT_SHORTCUT } from './timer.js';
-import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText } from './recall.js';
+import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, DEFAULT_SHORTCUT } from './timer.js';
+import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '15';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '16';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -49,7 +49,7 @@ let showLater = false;
 const revealed = new Set();                 // Weekly check: cards whose answer is shown (collapsed by default)
 let animateNext = false;                    // the next render slides cards to their new places
 let timer = null;                           // the header timer (js/timer-ui.js)
-let recordingShortcut = false;              // Settings: waiting for the new timer shortcut
+let recordingShortcut = null;               // Settings: 'timer' / 'copy' while waiting for a new shortcut
 
 // Recall: cards typed from memory (this browser only, for today) before a list is shown. Two lists:
 // 'today' (Today's cards) and 'check' (the weekly check). A list is hidden at the start of a session,
@@ -606,6 +606,25 @@ function saveTimerSettings(patch, message) {
   const old = engine.state().timer;
   commit(stateOp('timer', { ...(old && typeof old === 'object' ? old : {}), ...patch }), message, stateOp('timer', old ?? null));
 }
+// The keyboard shortcuts (state.json): kind 'timer' (start / pause) or 'copy' (Copy for AI check)
+const SHORTCUTS = {
+  timer: { name: 'Timer start / pause', current: () => timerSettings(engine.state()).shortcut, def: DEFAULT_SHORTCUT,
+    save: (sc, msg) => saveTimerSettings({ shortcut: sc }, msg) },
+  copy: { name: 'Copy for AI check', current: () => copyShortcutOf(engine.state()), def: DEFAULT_COPY_SHORTCUT,
+    save: (sc, msg) => commit(stateOp('aiShortcut', sc), msg, stateOp('aiShortcut', engine.state().aiShortcut ?? null)) }
+};
+// One shortcut row: the keys, Change (records the next key press), Turn off, Default
+function shortcutSetting(kind) {
+  const k = SHORTCUTS[kind], sc = k.current();
+  return h('div', { class: 'setting' }, h('span', { text: k.name + ' shortcut' }),
+    recordingShortcut === kind
+      ? [h('strong', { text: 'Press the new keys…' }), btn('Cancel', () => { recordingShortcut = null; render(); }, 'link')]
+      : [h('kbd', { text: shortcutLabel(sc) }),
+        btn('Change', () => { recordingShortcut = kind; render(); }),
+        sc ? btn('Turn off', () => k.save('', k.name + ' shortcut turned off.'), 'link') : null,
+        sc !== k.def ? btn('Default (' + shortcutLabel(k.def) + ')', () => k.save(k.def, k.name + ': ' + shortcutLabel(k.def) + '.'), 'link') : null]);
+}
+const SHORTCUT_NOTE = 'For the keyboard on a computer. Hold Ctrl, Alt or Win/Cmd with a key, or use an F key. Browser shortcuts such as Ctrl+T or Ctrl+W can’t be used. Saved in Dropbox, so all your devices use these.';
 function timerSettingsView() {
   const t = timerSettings(engine.state());
   const cycles = h('input', { type: 'number', min: '1', max: '999', inputmode: 'numeric', value: String(t.cycles), 'aria-label': 'Cycles by default',
@@ -613,14 +632,8 @@ function timerSettingsView() {
   return h('section', { class: 'sec' }, h('h2', { text: 'Timer' }),
     h('p', { class: 'note', text: 'Cycles of 10 seconds. The timer starts with this number after Reset or when it finishes; the timer panel can change it for one run.' }),
     h('label', { class: 'setting' }, h('span', { text: 'Cycles by default' }), cycles),
-    h('div', { class: 'setting' }, h('span', { text: 'Start / pause shortcut' }),
-      recordingShortcut
-        ? [h('strong', { text: 'Press the new keys…' }), btn('Cancel', () => { recordingShortcut = false; render(); }, 'link')]
-        : [h('kbd', { text: shortcutLabel(t.shortcut) }),
-          btn('Change', () => { recordingShortcut = true; render(); }),
-          t.shortcut ? btn('Turn off', () => saveTimerSettings({ shortcut: '' }, 'Timer shortcut turned off.'), 'link') : null,
-          t.shortcut !== DEFAULT_SHORTCUT ? btn('Default (' + shortcutLabel(DEFAULT_SHORTCUT) + ')', () => saveTimerSettings({ shortcut: DEFAULT_SHORTCUT }, 'Timer shortcut: ' + shortcutLabel(DEFAULT_SHORTCUT) + '.'), 'link') : null]),
-    h('p', { class: 'note', text: 'For the keyboard on a computer. Hold Ctrl, Alt or Win/Cmd with a key, or use an F key. Browser shortcuts such as Ctrl+T or Ctrl+W can’t be used. Saved in Dropbox, so all your devices use these.' }));
+    shortcutSetting('timer'),
+    h('p', { class: 'note', text: SHORTCUT_NOTE }));
 }
 function promptSettings() {
   const saved = engine.state().aiPrompt ?? null;
@@ -628,6 +641,7 @@ function promptSettings() {
   t.value = promptOf(engine.state());
   const save = value => commit(stateOp('aiPrompt', value), value == null ? 'Prompt reset to the default.' : 'Prompt saved.', stateOp('aiPrompt', saved));
   return h('section', { class: 'sec' }, h('h2', { text: 'AI check prompt' }),
+    shortcutSetting('copy'),
     h('p', { class: 'note', text: 'Copy for AI check on Today copies this text. {typed} is replaced with the cards you typed from memory and {cards} with today’s cards; without them both lists go at the end. Saved in Dropbox, so all your devices use it.' }),
     t,
     h('div', { class: 'row' },
@@ -643,7 +657,7 @@ function setTab(t) {
   autoSave();
   // Filling Prepared, then back to type today's cards: Today and the weekly check are hidden again
   if (t === 'prepared') { hideList('today'); hideList('check'); }
-  tab = t; store.set('wd.tab', t); menuFor = null; recordingShortcut = false;
+  tab = t; store.set('wd.tab', t); menuFor = null; recordingShortcut = null;
   render();
   window.scrollTo(0, 0);
 }
@@ -681,13 +695,21 @@ function wire() {
   window.addEventListener('keydown', ev => {
     if (!recordingShortcut) return;
     ev.preventDefault(); ev.stopPropagation();
-    if (ev.key === 'Escape') { recordingShortcut = false; render(); return; }
+    if (ev.key === 'Escape') { recordingShortcut = null; render(); return; }
     const sc = shortcutOf(ev);
     if (sc === null) return;   // only a modifier so far
     if (!sc) { toast('Hold Ctrl, Alt or Win/Cmd with the key, or use an F key.'); return; }
-    recordingShortcut = false;
-    saveTimerSettings({ shortcut: sc }, 'Timer shortcut: ' + shortcutLabel(sc) + '.');
+    const kind = recordingShortcut, other = Object.keys(SHORTCUTS).find(o => o !== kind && SHORTCUTS[o].current() === sc);
+    if (other) { toast(shortcutLabel(sc) + ' is already the ' + SHORTCUTS[other].name + ' shortcut.'); return; }
+    recordingShortcut = null;
+    SHORTCUTS[kind].save(sc, SHORTCUTS[kind].name + ': ' + shortcutLabel(sc) + '.');
   }, true);
+  // Copy for AI check from the keyboard: the weekly check's lists on that tab, Today's anywhere else
+  document.addEventListener('keydown', ev => {
+    if (!matchesShortcut(ev, copyShortcutOf(engine.state()))) return;
+    ev.preventDefault();
+    copyCheck(tab === 'check' ? 'check' : 'today');
+  });
   document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
   $('#loginRedirect').addEventListener('click', () => dbx.startLogin(true).catch(handleErr));
   $('#loginCode').addEventListener('click', () => dbx.startLogin(false).catch(handleErr));

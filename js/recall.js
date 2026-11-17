@@ -19,6 +19,10 @@ The cards:
 /** The prompt from state.json (Settings), or the default one */
 export const promptOf = state => (state && typeof state.aiPrompt === 'string' && state.aiPrompt.trim()) ? state.aiPrompt : DEFAULT_CHECK_PROMPT;
 
+/** Shortcut for Copy for AI check (state.json aiShortcut; '' = none), in the format of shortcutOf (js/timer.js) */
+export const DEFAULT_COPY_SHORTCUT = 'Ctrl+Shift+Digit1';
+export const copyShortcutOf = state => (state && typeof state.aiShortcut === 'string' ? state.aiShortcut : DEFAULT_COPY_SHORTCUT);
+
 /** Today's typed cards: the saved ones if they are from this date, otherwise a fresh empty list */
 export function recallFor(saved, date) {
   if (saved && saved.date === date && Array.isArray(saved.items)) return saved;
