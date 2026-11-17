@@ -1,7 +1,7 @@
 // The recall timer on the page (browser only): a small ring in the header that opens a panel with the big
 // ring, the cycle count and Start/Pause/Reset, like the CountDown page. Alt+T starts or pauses it.
 // Sounds are made with Web Audio (a ding at the end of each cycle, two pitches in turn, three beeps at the end),
-// plus vibration (Vibrate, on by default; on iPhone haptic ticks, see vibrate()).
+// plus vibration where the device can (Vibrate, on by default; not on iPhone, see vibrate()).
 
 import { timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, elapsedOf } from './timer.js';
 
@@ -55,31 +55,14 @@ const SOUNDS = {
 function play(name) { const c = audioCtx(); if (c) try { SOUNDS[name](c); } catch (e) {} }
 
 // ---- Vibration ----
-// The Vibration API where there is one (Android). iOS has none and a page can't see the silent switch, but
-// since iOS 18 a click on a switch-style checkbox gives a haptic tick; the Web Audio sounds above are muted by
-// the silent switch, so on a silent iPhone only the ticks remain. Pulses: 1 / 2 / 3 for odd / even / final.
+// The Vibration API where there is one (Android Chrome). iPhones have none: the old haptic trick (a script
+// click on an <input switch>) was closed in iOS 26.5, so Vibrate isn't offered there. Pulses: 1 / 2 / 3.
+const CAN_VIBRATE = typeof navigator.vibrate === 'function';
 const PULSES = { odd: 1, even: 2, final: 3 };
-let hapticLabel = null;
-function hapticTick() {
-  if (!hapticLabel) {
-    const input = el('input', { type: 'checkbox', switch: '', id: 'wdHaptic', tabindex: '-1', 'aria-hidden': 'true' });
-    hapticLabel = el('label', { for: 'wdHaptic', 'aria-hidden': 'true' });
-    const box = el('div', { style: 'position:fixed;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;left:-10px;top:0' }, input, hapticLabel);
-    document.body.append(box);
-  }
-  // The click may move the focus to the hidden switch (desktop browsers): give it back, so an open card
-  // isn't saved and closed by a tick
-  const had = document.activeElement;
-  hapticLabel.click();
-  if (had && had !== document.activeElement && had.focus) had.focus({ preventScroll: true });
-}
 function vibrate(name) {
+  if (!CAN_VIBRATE) return;
   const n = PULSES[name] || 1;
-  if (navigator.vibrate) {
-    navigator.vibrate(name === 'final' ? [250, 120, 250, 120, 500] : Array.from({ length: n * 2 - 1 }, (_, i) => (i % 2 ? 90 : 120)));
-    return;
-  }
-  for (let i = 0; i < n; i++) setTimeout(hapticTick, i * 180);
+  navigator.vibrate(name === 'final' ? [250, 120, 250, 120, 500] : Array.from({ length: n * 2 - 1 }, (_, i) => (i % 2 ? 90 : 120)));
 }
 
 export function mountTimer({ button, panel, store }) {
@@ -112,7 +95,7 @@ export function mountTimer({ button, panel, store }) {
     el('div', { class: 'timer-side' },
       cycleText,
       el('label', { class: 'timer-total' }, el('span', { text: 'Cycles of 10 s' }), total),
-      el('label', { class: 'timer-vibrate' }, vib, el('span', { text: 'Vibrate' })),
+      CAN_VIBRATE ? el('label', { class: 'timer-vibrate' }, vib, el('span', { text: 'Vibrate' })) : '',
       el('div', { class: 'timer-buttons' }, startBtn, resetBtn)),
     el('button', { type: 'button', class: 'icon timer-close', title: 'Close', 'aria-label': 'Close timer', text: '✕', onclick: () => setOpen(false) }));
 
