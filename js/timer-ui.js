@@ -131,17 +131,20 @@ export function mountTimer({ button, panel, store, settings }) {
     miniText.textContent = idle ? '⏱' : String(v.cyclesLeft);
     button.classList.toggle('running', v.running);
     // The whole page shows the timer, so there's no need to look up at the ring (on a phone the eyes are on the
-    // keyboard): a tint of the cycle colour, a flash when a new cycle starts, and --timer-progress (0…1) for the
-    // left-to-right fills (the Recall boxes and the line under the header)
+    // keyboard): a tint of the cycle colour (phones), three flashes when a new cycle starts, --timer-progress (0…1,
+    // this cycle) for the left-to-right fill of the Recall boxes, --timer-total (0…1, the whole run) for the line
+    // under the header
     const root = document.documentElement;
     root.classList.toggle('timer-running', v.running);
     if (v.running) {
       root.style.setProperty('--timer-color', color);
       root.style.setProperty('--timer-progress', v.progress.toFixed(4));
+      root.style.setProperty('--timer-total', ((v.cycle - 1 + v.progress) / v.total).toFixed(4));   // the whole run
       if (shownCycle != null && shownCycle !== v.cycle) {
+        root.classList.remove('timer-flash'); void root.offsetWidth;   // restart the animation if still on
         root.classList.add('timer-flash');
         clearTimeout(flashTimer);
-        flashTimer = setTimeout(() => root.classList.remove('timer-flash'), 700);
+        flashTimer = setTimeout(() => root.classList.remove('timer-flash'), 1300);   // three pulses of 0.4 s
       }
       shownCycle = v.cycle;
     } else shownCycle = null;

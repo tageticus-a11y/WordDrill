@@ -159,15 +159,31 @@
   .typed textarea:focus, textarea.prompt:focus { outline: none; border-color: var(--accent); }
   .typed .icon { flex: none; color: var(--muted); }
   .typed textarea { transition: border-color .3s ease; }
-  /* While the timer runs, the whole app takes the cycle colour (a tint, a flash when a new cycle starts), and a
-     line under the header fills from left to right: visible while the eyes are on the keyboard */
-  body, header.top { transition: background-color .5s ease; }
-  .timer-running body, .timer-running header.top { background: color-mix(in srgb, var(--timer-color) 13%, var(--paper)); }
-  .timer-flash body, .timer-flash header.top { background: color-mix(in srgb, var(--timer-color) 45%, var(--paper)); transition: none; }
+  /* While the timer runs, a line under the header fills from left to right over the WHOLE run
+     (--timer-total 0…1), with milestones at 2/5 and 4/5 of the time (the run in parts of 2/5, 2/5 and 1/5) */
   header.top::after {
     content: ''; position: absolute; left: 0; bottom: -1px; height: 4px; width: 0; background: var(--timer-color);
   }
-  .timer-running header.top::after { width: calc(var(--timer-progress, 0) * 100%); }
+  .timer-running header.top::after { width: calc(var(--timer-total, 0) * 100%); }
+  .timer-running header.top::before {
+    content: ''; position: absolute; left: 0; right: 0; bottom: -3px; height: 8px; z-index: 2; pointer-events: none;   /* the ticks, over the fill */
+    background:
+      linear-gradient(var(--ink), var(--ink)) calc(40% - 1px) 0 / 3px 100% no-repeat,
+      linear-gradient(var(--ink), var(--ink)) calc(80% - 1px) 0 / 3px 100% no-repeat;
+  }
+  .timer-running header.top::after { z-index: 1; }
+  /* On a phone (the eyes are on the keyboard) the whole app takes the cycle colour, and flashes three times
+     when a new cycle starts; a computer keeps its colours */
+  @media (pointer: coarse) {
+    body, header.top { transition: background-color .5s ease; }
+    .timer-running body, .timer-running header.top { background: color-mix(in srgb, var(--timer-color) 15%, var(--paper)); }
+    .timer-flash body, .timer-flash header.top { animation: timer-flash .4s ease-in-out 3; }
+  }
+  @keyframes timer-flash { 50% { background: color-mix(in srgb, var(--timer-color) 80%, var(--paper)); } }
+  /* Everywhere, the Recall boxes flash three times too */
+  .timer-flash .typed textarea { animation: timer-flash-box .4s ease-in-out 3; }
+  @keyframes timer-flash-box { 50% { background: var(--timer-color); } }
+  @media (prefers-reduced-motion: reduce) { .timer-flash body, .timer-flash header.top, .timer-flash .typed textarea { animation: none; } }
   /* While the timer runs, the boxes show the colour of the cycle (red, green in turn) */
   /* …and fill from left to right as the cycle goes (--timer-progress 0…1) */
   .timer-running .typed textarea {
