@@ -1,13 +1,66 @@
-// Draws the app icons as PNGs, with no dependencies: a rotary card file (Rolodex-style wheel of cards)
-// spun by a power drill, a play on "WordDrill". Run: node scripts/make-icons.mjs
-import { writeFileSync } from 'node:fs';
-import { deflateSync } from 'node:zlib';
+// Makes the app icons (icon-180/192/512.png) from scripts/icon-source.png, with no dependencies:
+// decodes the PNG, scales it down by averaging (area resampling) and writes opaque RGB PNGs.
+// The source is a Rolodex-style card file spun by a drill ("WordDrill"), made with ChatGPT for this app.
+// Run: node scripts/make-icons.mjs [out-dir]
+import { readFileSync, writeFileSync } from 'node:fs';
+import { inflateSync, deflateSync } from 'node:zlib';
 
-const BG = [15, 23, 36];
-const CARD = [122, 174, 247], CARD_ALT = [160, 198, 250], CARD_EDGE = [40, 64, 104];
-const HUB = [10, 20, 36], HUB_RING = [201, 190, 245];
-const MOTION = [92, 130, 190];
-const BODY = [242, 168, 72], BODY_DARK = [196, 120, 40], GRIP = [44, 40, 52], METAL = [196, 204, 216], CHUCK = [92, 100, 116];
+const SOURCE = new URL('./icon-source.png', import.meta.url);
+const BG = [15, 23, 36];   // what transparent pixels become (the app's dark background)
+
+function decodePng(buf) {
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('not a PNG');
+  let at = 8, w, h, depth, type, interlace;
+  const idat = [];
+  while (at < buf.length) {
+    const len = buf.readUInt32BE(at), name = buf.toString('ascii', at + 4, at + 8), data = buf.subarray(at + 8, at + 8 + len);
+    if (name === 'IHDR') { w = data.readUInt32BE(0); h = data.readUInt32BE(4); depth = data[8]; type = data[9]; interlace = data[12]; }
+    else if (name === 'IDAT') idat.push(data);
+    else if (name === 'IEND') break;
+    at += 12 + len;
+  }
+  const channels = { 2: 3, 6: 4, 0: 1, 4: 2 }[type];
+  if (depth !== 8 || !channels || interlace) throw new Error('unsupported PNG: needs 8-bit grey/RGB(A), not interlaced');
+  const raw = inflateSync(Buffer.concat(idat)), stride = w * channels, px = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)], line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? px[y * stride + x - channels] : 0, b = y ? px[(y - 1) * stride + x] : 0;
+      const c = x >= channels && y ? px[(y - 1) * stride + x - channels] : 0;
+      let v = line[x];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      px[y * stride + x] = v & 255;
+    }
+  }
+  // → RGB over the background
+  const rgb = new Float64Array(w * h * 3);
+  for (let i = 0; i < w * h; i++) {
+    const p = i * channels, grey = channels <= 2;
+    const r = px[p], g = grey ? px[p] : px[p + 1], bl = grey ? px[p] : px[p + 2];
+    const alpha = channels === 4 ? px[p + 3] / 255 : channels === 2 ? px[p + 1] / 255 : 1;
+    rgb[i * 3] = r * alpha + BG[0] * (1 - alpha); rgb[i * 3 + 1] = g * alpha + BG[1] * (1 - alpha); rgb[i * 3 + 2] = bl * alpha + BG[2] * (1 - alpha);
+  }
+  return { w, h, rgb };
+}
+
+// Area resampling: each target pixel is the average of the source area it covers
+function resize({ w, h, rgb }, size) {
+  const out = Buffer.alloc(size * size * 3), sx = w / size, sy = h / size;
+  for (let ty = 0; ty < size; ty++) for (let tx = 0; tx < size; tx++) {
+    const x0 = tx * sx, x1 = x0 + sx, y0 = ty * sy, y1 = y0 + sy, acc = [0, 0, 0];
+    let total = 0;
+    for (let y = Math.floor(y0); y < Math.ceil(y1); y++) {
+      const wy = Math.min(y + 1, y1) - Math.max(y, y0);
+      for (let x = Math.floor(x0); x < Math.ceil(x1); x++) {
+        const wt = wy * (Math.min(x + 1, x1) - Math.max(x, x0)), i = (y * w + x) * 3;
+        acc[0] += rgb[i] * wt; acc[1] += rgb[i + 1] * wt; acc[2] += rgb[i + 2] * wt; total += wt;
+      }
+    }
+    for (let k = 0; k < 3; k++) out[(ty * size + tx) * 3 + k] = Math.round(acc[k] / total);
+  }
+  return out;
+}
 
 function crc32(buf) {
   let c, crc = ~0;
@@ -20,83 +73,15 @@ function chunk(type, data) {
   const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td));
   return Buffer.concat([len, td, crc]);
 }
-const inRoundRect = (x, y, x0, y0, x1, y1, r) => {
-  if (x < x0 || x > x1 || y < y0 || y > y1) return false;
-  const cx = Math.min(Math.max(x, x0 + r), x1 - r), cy = Math.min(Math.max(y, y0 + r), y1 - r);
-  return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
-};
-const distToSeg = (px, py, ax, ay, bx, by) => {
-  const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
-  return Math.hypot(px - ax - t * dx, py - ay - t * dy);
-};
-
-// The wheel of cards
-const C = [0.6, 0.39], N = 12, R0 = 0.085, R1 = 0.305, HALF = 0.05;
-// The drill: its bit tip at the hub, the body going down-left; s = distance back along the drill, t = across
-const D = (() => { const dx = -0.46, dy = 0.44, l = Math.hypot(dx, dy); return [dx / l, dy / l]; })();
-const P = [D[1], -D[0]];   // across, towards the lower right (the side the handle hangs on)
-
-function drill(u, v) {
-  const x = u - C[0], y = v - C[1];
-  const s = (x * D[0] + y * D[1]) / 1.3, t = (x * P[0] + y * P[1]) / 1.3;   // drawn 1.3× larger
-  if (s >= 0.02 && s <= 0.12 && Math.abs(t) < 0.013) return METAL;                       // bit
-  if (s > 0.12 && s <= 0.19 && Math.abs(t) < 0.026 + (s - 0.12) * 0.25) return CHUCK;     // chuck, tapered
-  if (inRoundRect(s, t, 0.19, -0.068, 0.47, 0.068, 0.05)) {                               // body
-    if (s > 0.43) return BODY_DARK;                                                      // back cap
-    return t < -0.03 ? CARD_ALT.map((c, k) => Math.round((c + BODY[k] * 3) / 4)) : BODY;  // a highlight on top
-  }
-  if (inRoundRect(s, t, 0.31, 0.215, 0.5, 0.285, 0.025)) return GRIP;                     // battery
-  if (distToSeg(s, t, 0.36, 0.03, 0.4, 0.22) < 0.042) return BODY_DARK;                   // handle
-  return null;
-}
-function wheel(u, v) {
-  const x = u - C[0], y = v - C[1], r = Math.hypot(x, y);
-  if (r < 0.06) return r < 0.03 ? HUB_RING : HUB;                                         // hub
-  if (r < 0.068) return CARD_EDGE;
-  // Cards drawn in order; a later card covers an earlier one where they overlap
-  let hit = null;
-  for (let k = 0; k < N; k++) {
-    const a = (k / N) * 2 * Math.PI + 0.2;
-    const along = x * Math.cos(a) + y * Math.sin(a), across = -x * Math.sin(a) + y * Math.cos(a);
-    if (inRoundRect(along, across, R0, -HALF, R1, HALF, 0.022)) {
-      const edge = !inRoundRect(along, across, R0 + 0.007, -HALF + 0.007, R1 - 0.007, HALF - 0.007, 0.016);
-      // Two lines of "text" near the outer end make them read as index cards
-      const line = Math.abs(across + 0.018) < 0.006 || Math.abs(across - 0.006) < 0.006;
-      const text = line && along > R1 - 0.12 && along < R1 - 0.025 && !(Math.abs(across - 0.006) < 0.006 && along > R1 - 0.06);
-      hit = edge ? CARD_EDGE : text ? CARD_EDGE : k % 2 ? CARD_ALT : CARD;
-    }
-  }
-  if (hit) return hit;
-  // Motion arcs around the wheel: it spins
-  const ang = Math.atan2(y, x) * 180 / Math.PI;
-  const inArc = (a0, a1) => ang >= a0 && ang <= a1;
-  if (r > 0.345 && r < 0.372 && (inArc(-150, -95) || inArc(-60, -5))) return MOTION;
-  return null;
-}
-function color(u, v) {   // u, v in 0..1
-  // Everything a little smaller than the drawing, so the rounded icon corners cut nothing
-  const Z = 0.84, O = [0.48, 0.565];
-  u = O[0] + (u - 0.5) / Z; v = O[1] + (v - 0.5) / Z;
-  return drill(u, v) || wheel(u, v) || BG;
-}
-function png(size) {
-  const S = 4, raw = Buffer.alloc((size * 3 + 1) * size);
-  for (let y = 0; y < size; y++) {
-    raw[y * (size * 3 + 1)] = 0;
-    for (let x = 0; x < size; x++) {
-      const acc = [0, 0, 0];
-      for (let sy = 0; sy < S; sy++) for (let sx = 0; sx < S; sx++) {
-        const c = color((x + (sx + .5) / S) / size, (y + (sy + .5) / S) / size);
-        acc[0] += c[0]; acc[1] += c[1]; acc[2] += c[2];
-      }
-      const o = y * (size * 3 + 1) + 1 + x * 3;
-      for (let k = 0; k < 3; k++) raw[o + k] = Math.round(acc[k] / (S * S));
-    }
-  }
+function encodePng(pixels, size) {
+  const raw = Buffer.alloc((size * 3 + 1) * size);
+  for (let y = 0; y < size; y++) pixels.copy(raw, y * (size * 3 + 1) + 1, y * size * 3, (y + 1) * size * 3);
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4); ihdr[8] = 8; ihdr[9] = 2;
-  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
 }
+
+const src = decodePng(readFileSync(SOURCE));
 const out = process.argv[2] ? new URL('file:///' + process.argv[2].replace(/\\/g, '/') + '/') : new URL('../', import.meta.url);
-for (const s of [180, 192, 512]) writeFileSync(new URL('icon-' + s + '.png', out), png(s));
-console.log('icons written');
+for (const s of [180, 192, 512]) writeFileSync(new URL('icon-' + s + '.png', out), encodePng(resize(src, s), s));
+console.log('icons written from ' + src.w + '×' + src.h);

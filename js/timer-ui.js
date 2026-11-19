@@ -73,6 +73,7 @@ export function mountTimer({ button, panel, store, settings }) {
   let open = store.get('wd.timerOpen') !== false;   // open unless closed with ✕
   let last = elapsedOf(s, Date.now());
   let loop = null;
+  let shownCycle = null, flashTimer = null;   // to flash the page when a new cycle starts
   const save = () => store.set('wd.timer', s);
   let buzz = store.get('wd.timerVibrate') !== false;   // on unless turned off (this device only)
   const signal = name => { play(name); if (buzz) vibrate(name); };
@@ -103,7 +104,7 @@ export function mountTimer({ button, panel, store, settings }) {
     el('button', { type: 'button', class: 'icon timer-close', title: 'Close', 'aria-label': 'Close timer', text: '✕', onclick: () => setOpen(false) }));
 
   function setOpen(v) { open = v; store.set('wd.timerOpen', v); draw(); }
-  function startLoop() { if (!loop) loop = setInterval(tick, 200); }
+  function startLoop() { if (!loop) loop = setInterval(tick, 100); }
   function stopLoop() { clearInterval(loop); loop = null; }
   function toggle() {
     const now = Date.now();
@@ -129,10 +130,21 @@ export function mountTimer({ button, panel, store, settings }) {
     mini.set(idle ? 0 : v.progress, color);
     miniText.textContent = idle ? '⏱' : String(v.cyclesLeft);
     button.classList.toggle('running', v.running);
-    // The page knows the cycle colour too: the Recall boxes take it, so there's no need to look up at the ring
+    // The whole page shows the timer, so there's no need to look up at the ring (on a phone the eyes are on the
+    // keyboard): a tint of the cycle colour, a flash when a new cycle starts, and --timer-progress (0…1) for the
+    // left-to-right fills (the Recall boxes and the line under the header)
     const root = document.documentElement;
     root.classList.toggle('timer-running', v.running);
-    if (v.running) root.style.setProperty('--timer-color', color);
+    if (v.running) {
+      root.style.setProperty('--timer-color', color);
+      root.style.setProperty('--timer-progress', v.progress.toFixed(4));
+      if (shownCycle != null && shownCycle !== v.cycle) {
+        root.classList.add('timer-flash');
+        clearTimeout(flashTimer);
+        flashTimer = setTimeout(() => root.classList.remove('timer-flash'), 700);
+      }
+      shownCycle = v.cycle;
+    } else shownCycle = null;
     button.classList.toggle('on', open);
     const key = settings().shortcut ? shortcutLabel(settings().shortcut) : '';
     button.title = v.running
@@ -146,6 +158,7 @@ export function mountTimer({ button, panel, store, settings }) {
     cycleText.textContent = 'Cycle ' + v.cycle + ' / ' + v.total;
     if (document.activeElement !== total) total.value = String(s.total);
     startBtn.textContent = v.running ? 'Pause' : s.elapsed > 0 ? 'Resume' : 'Start';
+    startBtn.title = key ? startBtn.textContent + ' (' + key + ')' : '';
   }
 
   button.addEventListener('click', () => setOpen(!open));

@@ -16,7 +16,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '16';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '17';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -366,6 +366,8 @@ function clearRecall(k, hide) {
 }
 // The real cards a list is checked against
 const recallCards = k => k === 'today' ? sectionsOf(engine.doc(CURRENT)) : dueSections(checkedDay(), today());
+// Hover text of the Copy for AI check buttons: with the current shortcut
+const copyTitle = () => { const sc = copyShortcutOf(engine.state()); return 'Copy for AI check' + (sc ? ' (' + shortcutLabel(sc) + ')' : ''); };
 function copyCheck(k) {
   const text = buildCheckText(promptOf(engine.state()), typedTexts(curRecall(k)), recallCards(k));
   copyText(text).then(ok => toast(ok ? 'Copied: the prompt, your typed cards and the real cards. Paste it into the AI chat.'
@@ -389,7 +391,7 @@ function recallBar(k) {
   const n = typedTexts(curRecall(k)).length;
   return h('div', { class: 'bar recall-bar' },
     h('span', { class: 'note', text: n ? 'Typed from memory: ' + plural(n, 'card') + '.' : 'Nothing typed from memory.' }),
-    n ? btn('Copy for AI check', () => copyCheck(k)) : null,
+    n ? btn('Copy for AI check', () => copyCheck(k), null, copyTitle()) : null,
     btn('Hide and type again', () => clearRecall(k, true), 'link'));
 }
 // The typing boxes shown instead of a hidden list; what: "today’s cards" / "the cards to check"
@@ -423,6 +425,16 @@ function recallPanel(k, what) {
     t.addEventListener('keydown', ev => {
       if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); addAfter(it); }
       else if (ev.key === 'Backspace' && !t.value && r.items.length > 1) { ev.preventDefault(); remove(it); }
+      // ↓ on the last line goes to the box below, ↑ on the first line to the box above (nothing past the ends)
+      else if ((ev.key === 'ArrowDown' || ev.key === 'ArrowUp') && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+        const down = ev.key === 'ArrowDown';
+        const edge = down ? !t.value.slice(t.selectionEnd).includes('\n') : !t.value.slice(0, t.selectionStart).includes('\n');
+        if (!edge) return;
+        ev.preventDefault();
+        const to = r.items[r.items.indexOf(it) + (down ? 1 : -1)];
+        const box = to && document.querySelector('.recall textarea[data-rid="' + to.id + '"]');
+        if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+      }
     });
     t.addEventListener('blur', () => { if (renderPending) setTimeout(() => { if (renderPending && !typingFocused()) render(); }, 0); });
     requestAnimationFrame(grow);
@@ -431,7 +443,7 @@ function recallPanel(k, what) {
   };
   const count = h('span', { class: 'count' });
   const showBtn = btn('', () => showList(k), 'primary');
-  const copyBtn = btn('Copy for AI check', () => copyCheck(k));
+  const copyBtn = btn('Copy for AI check', () => copyCheck(k), null, copyTitle());
   const clearBtn = btn('Clear', () => clearRecall(k, false), 'link');
   // Kept up to date while typing (no redraw, so the text box keeps the focus)
   updateRecallButtons = () => {
@@ -445,7 +457,7 @@ function recallPanel(k, what) {
     h('h2', {}, 'Recall', count),
     h('p', { class: 'note', text: 'Type every card you remember, in any order, then show ' + what + '. Ctrl+Enter starts the next card. Kept on this device only, for today.' }),
     r.items.map(box),
-    btn('+ Next card', () => addAfter(r.items[r.items.length - 1]), 'add'),
+    btn('+ Next card', () => addAfter(r.items[r.items.length - 1]), 'add', '+ Next card (Ctrl+Enter)'),
     h('div', { class: 'row' }, showBtn, copyBtn, clearBtn));
 }
 let updateRecallButtons = () => {};
