@@ -89,3 +89,11 @@ export function shortcutLabel(shortcut) {
   if (!shortcut) return 'None';
   return shortcut.split('+').map(p => p === 'Meta' ? 'Win/Cmd' : p.replace(/^Key([A-Z])$/, '$1').replace(/^Digit(\d)$/, '$1').replace(/^Numpad/, 'Num ')).join('+');
 }
+
+/** Milestones of a run: at 2/5 and 4/5 of the whole time (the line under the header shows them) */
+export const MILESTONES = [0.4, 0.8];
+/** Milestones passed between two moments (elapsed ms): [{ k (1-based), at }] */
+export function milestonesPassed(s, from, to) {
+  return MILESTONES.map((f, i) => ({ k: i + 1, at: Math.round(f * s.total * CYCLE_MS) }))
+    .filter(m => m.at > from && m.at <= to && m.at < s.total * CYCLE_MS);
+}

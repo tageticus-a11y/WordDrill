@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CYCLE_MS, timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, timerSettings, shortcutOf, matchesShortcut, shortcutLabel } from '../js/timer.js';
+import { CYCLE_MS, timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, timerSettings, shortcutOf, matchesShortcut, shortcutLabel, milestonesPassed } from '../js/timer.js';
 
 test('fresh and broken saved states', () => {
   assert.deepEqual(timerState(null), { total: 21, startAt: null, elapsed: 0 });
@@ -74,4 +74,13 @@ test('shortcuts from key presses', () => {
   assert.equal(shortcutLabel('Ctrl+Shift+Digit1'), 'Ctrl+Shift+1');
   assert.equal(shortcutLabel('Meta+Space'), 'Win/Cmd+Space');
   assert.equal(shortcutLabel(''), 'None');
+});
+
+test('milestones at 2/5 and 4/5 of the run', () => {
+  const s = timerState({ total: 21 });                      // 210 s: milestones at 84 s and 168 s
+  assert.deepEqual(milestonesPassed(s, 83900, 84000), [{ k: 1, at: 84000 }]);
+  assert.deepEqual(milestonesPassed(s, 84000, 84100), []);   // only once
+  assert.deepEqual(milestonesPassed(s, 0, 999999).map(m => m.at), [84000, 168000]);
+  assert.deepEqual(milestonesPassed(timerState({ total: 5 }), 19950, 20050), [{ k: 1, at: 20000 }]);   // on a cycle end
+  assert.deepEqual(milestonesPassed(timerState({ total: 1 }), 0, 10000).map(m => m.at), [4000, 8000]);
 });

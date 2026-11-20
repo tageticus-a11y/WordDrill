@@ -4,7 +4,7 @@
 // Sounds are made with Web Audio (a ding at the end of each cycle, two pitches in turn, three beeps at the end),
 // plus vibration where the device can (Vibrate, on by default; not on iPhone, see vibrate()).
 
-import { timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, elapsedOf, matchesShortcut, shortcutLabel } from './timer.js';
+import { timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, milestonesPassed, elapsedOf, matchesShortcut, shortcutLabel } from './timer.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const COLORS = ['var(--alert)', 'var(--ok)'];    // cycles in turn: red, green
@@ -48,9 +48,13 @@ function tone(c, freq, at, dur, type = 'sine', vol = 0.25) {
   o.connect(g).connect(c.destination);
   o.start(t); o.stop(t + dur + 0.05);
 }
+const bell = (c, freq, at) => { tone(c, freq, at, 1.1); tone(c, freq * 2, at, 0.45, 'sine', 0.06); };
 const SOUNDS = {
   odd: c => { tone(c, 880, 0, 1.3); tone(c, 1760, 0, 0.5, 'sine', 0.06); },
   even: c => { tone(c, 660, 0, 1.3); tone(c, 1320, 0, 0.5, 'sine', 0.06); },
+  // Milestones (2/5 and 4/5 of the run): the same soft bell, but rising notes: two for the first, three for the second
+  milestone1: c => { bell(c, 660, 0); bell(c, 990, 0.2); },
+  milestone2: c => { bell(c, 660, 0); bell(c, 990, 0.2); bell(c, 1320, 0.4); },
   final: c => { tone(c, 988, 0, 0.22, 'triangle', 0.3); tone(c, 988, 0.32, 0.22, 'triangle', 0.3); tone(c, 1319, 0.64, 1, 'triangle', 0.3); }
 };
 function play(name) { const c = audioCtx(); if (c) try { SOUNDS[name](c); } catch (e) {} }
@@ -60,7 +64,7 @@ function play(name) { const c = audioCtx(); if (c) try { SOUNDS[name](c); } catc
 // click on an <input switch>) was closed in iOS 26.5, so Vibrate isn't offered there. Pulses: 1 / 2 / 3.
 // Desktop Chrome has navigator.vibrate too (with nothing to vibrate): touch devices only
 const CAN_VIBRATE = typeof navigator.vibrate === 'function' && matchMedia('(pointer: coarse)').matches;
-const PULSES = { odd: 1, even: 2, final: 3 };
+const PULSES = { odd: 1, even: 2, final: 3, milestone1: 2, milestone2: 3 };
 function vibrate(name) {
   if (!CAN_VIBRATE) return;
   const n = PULSES[name] || 1;
@@ -117,7 +121,12 @@ export function mountTimer({ button, panel, store, settings }) {
     const now = Date.now(), e = elapsedOf(s, now);
     if (s.startAt != null) {
       const ends = cycleEnds(s, last, e), end = ends[ends.length - 1];
-      if (end && e - end.at < 2000) signal(end.sound);   // not a pile of old dings after the app was in the background
+      // A milestone passed has its own chime (instead of the ding when both come at once); the final beeps win.
+      // Nothing older than 2 s: not a pile of old dings after the app was in the background.
+      const ms = milestonesPassed(s, last, e), mile = ms[ms.length - 1];
+      if (end && end.sound === 'final' && e - end.at < 2000) signal('final');
+      else if (mile && e - mile.at < 2000) signal('milestone' + mile.k);
+      else if (end && e - end.at < 2000) signal(end.sound);
       if (timerView(s, now).done) { s = resetTimer(s, settings().cycles); save(); stopLoop(); last = 0; draw(); return; }
     }
     last = e;

@@ -1,6 +1,6 @@
 // Caches the app shell so WordDrill opens without internet.
 // Bump the version whenever app files change (tests check that SHELL lists every js file).
-const CACHE = 'worddrill-v19';
+const CACHE = 'worddrill-v20';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png',
   './js/app.js', './js/dates.js', './js/demo.js', './js/dropbox.js', './js/format.js', './js/markdown.js', './js/ops.js', './js/recall.js', './js/sync.js', './js/timer.js', './js/timer-ui.js', './js/versions.js'];
 
