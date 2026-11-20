@@ -1,5 +1,6 @@
-// Recall practice (pure): the cards typed from memory before a list (Today, Weekly check) is shown, and the
-// text copied for an AI spelling check. The typed cards stay in this browser only (localStorage), never in Dropbox.
+// Recall practice (pure): the cards typed from memory before Today's list is shown, the text copied for an AI
+// spelling check, and what is typed under each collapsed Weekly check card. All typing stays in this browser
+// only (localStorage), never in Dropbox.
 
 import { plainText } from './markdown.js';
 
@@ -27,6 +28,12 @@ export const copyShortcutOf = state => (state && typeof state.aiShortcut === 'st
 export function recallFor(saved, date) {
   if (saved && saved.date === date && Array.isArray(saved.items)) return saved;
   return { date, items: [] };
+}
+
+/** Weekly check: text typed per card id ({ date, byId }), kept for this date only */
+export function checkTypedFor(saved, date) {
+  if (saved && saved.date === date && saved.byId && typeof saved.byId === 'object') return saved;
+  return { date, byId: {} };
 }
 
 /** Typed entries that have text */

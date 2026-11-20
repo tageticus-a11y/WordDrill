@@ -13,10 +13,10 @@ import {
 import { createVersions } from './versions.js';
 import { mountTimer } from './timer-ui.js';
 import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, DEFAULT_SHORTCUT } from './timer.js';
-import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT } from './recall.js';
+import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '18';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '19';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -51,11 +51,20 @@ let animateNext = false;                    // the next render slides cards to t
 let timer = null;                           // the header timer (js/timer-ui.js)
 let recordingShortcut = null;               // Settings: 'timer' / 'copy' while waiting for a new shortcut
 
-// Recall: cards typed from memory (this browser only, for today) before a list is shown. Two lists:
-// 'today' (Today's cards) and 'check' (the weekly check). A list is hidden at the start of a session,
-// after a long break (LIST_HIDE_AFTER) and after a visit to Prepared; hiding clears the typed cards.
-const RECALL = { today: { key: 'wd.recall', shown: 'wd.listShown' }, check: { key: 'wd.recallCheck', shown: 'wd.checkShown' } };
-const recalls = { today: recallFor(store.get(RECALL.today.key), today()), check: recallFor(store.get(RECALL.check.key), today()) };
+// Recall: cards typed from memory (this browser only, for today) before Today's list is shown. The list is
+// hidden at the start of a session, after a long break (LIST_HIDE_AFTER) and after a visit to Prepared; hiding
+// clears the typed cards. (k = 'today': the code keeps the key so another list could use it again.)
+const RECALL = { today: { key: 'wd.recall', shown: 'wd.listShown' } };
+const recalls = { today: recallFor(store.get(RECALL.today.key), today()) };
+store.del('wd.recallCheck');                // the weekly check had a Recall list until v18
+// Weekly check: what is typed under each collapsed card (this browser only, for today), shown next to the card
+let checkTyped = checkTypedFor(store.get('wd.checkTyped'), today());
+const typedFor = id => { checkTyped = checkTypedFor(checkTyped, today()); return checkTyped.byId[id] || ''; };
+const setTypedFor = (id, text) => {
+  checkTyped = checkTypedFor(checkTyped, today());
+  if (text.trim()) checkTyped.byId[id] = text; else delete checkTyped.byId[id];
+  store.set('wd.checkTyped', checkTyped);
+};
 let focusRecall = null;                     // typed card to focus after the next render
 const LIST_HIDE_AFTER = 30 * 60 * 1000;
 const session = {
@@ -263,7 +272,7 @@ function cancelEdit() {
   closeEditor();
 }
 const editorFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea');
-const typingFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea, .recall textarea, textarea.prompt');
+const typingFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea, .typed textarea, textarea.prompt');
 
 /* ============ Cards ============ */
 // "Move to…" another section of the same file; Undo puts the card back in its place
@@ -276,13 +285,19 @@ function sectionPicker(path, section, card, index) {
   } }, h('option', { value: '', selected: true, disabled: true }, 'Move to…'), others.map(n => h('option', { value: n }, n)));
 }
 
-function cardView(card, { path, section, actions = [], meta, editable = true }) {
+// typed: what the user typed for this card (Weekly check), shown side by side with the card
+function cardView(card, { path, section, actions = [], meta, editable = true, typed }) {
   if (editing && editing.path === path && editing.id === card.id) return renderEditor();
   // Read-only: the text is there to select and copy; ✎ Edit (next to the main button) opens the editor
   const body = h('div', { class: 'md' });
   body.append(toDom(card.body));
   if (editable) actions = [...actions.slice(0, 1), btn('✎ Edit', () => startEdit(path, section, card), 'edit'), ...actions.slice(1)];
-  return h('article', { class: 'card', 'data-id': card.id }, body,
+  const main = typed
+    ? h('div', { class: 'compare' },
+      h('div', { class: 'compare-typed' }, h('div', { class: 'label', text: 'You typed' }), h('div', { class: 'typed-text', text: typed })),
+      h('div', { class: 'compare-card' }, h('div', { class: 'label', text: 'Card' }), body))
+    : body;
+  return h('article', { class: 'card', 'data-id': card.id }, main,
     meta ? h('div', { class: 'meta', text: meta }) : null,
     actions.length ? h('div', { class: 'actions' }, actions) : null);
 }
@@ -341,7 +356,7 @@ function renderList(path) {
   return out;
 }
 /* ============ Recall ============ */
-// k: 'today' or 'check'
+// k: 'today' (the only Recall list now)
 function curRecall(k) { if (recalls[k].date !== today()) recalls[k] = recallFor(null, today()); return recalls[k]; }
 const saveRecall = k => store.set(RECALL[k].key, recalls[k]);
 const newRecallId = () => Math.random().toString(36).slice(2, 9);
@@ -352,7 +367,7 @@ function showList(k) {
   r.shown = true; saveRecall(k);
   setListShown(k, true); animateNext = true; render(); window.scrollTo(0, 0);
 }
-const editingIn = k => !!editing && (k === 'today' ? editing.path === CURRENT : editing.path.startsWith('week/'));
+const editingIn = k => !!editing && k === 'today' && editing.path === CURRENT;
 // Hides a list again (not while one of its cards is being edited)
 function hideList(k) { if (!editingIn(k)) setListShown(k, false); }
 // Clears the typed cards (with Undo); hide: also hides the list again
@@ -365,7 +380,7 @@ function clearRecall(k, hide) {
   if (typedTexts({ items: old }).length) toast('Typed cards cleared.', { undo: () => restoreTyped(k, old) });
 }
 // The real cards a list is checked against
-const recallCards = k => k === 'today' ? sectionsOf(engine.doc(CURRENT)) : dueSections(checkedDay(), today());
+const recallCards = () => sectionsOf(engine.doc(CURRENT));
 // Hover text of the Copy for AI check buttons: with the current shortcut
 const copyTitle = () => { const sc = copyShortcutOf(engine.state()); return 'Copy for AI check' + (sc ? ' (' + shortcutLabel(sc) + ')' : ''); };
 function copyCheck(k) {
@@ -480,6 +495,29 @@ function reminder(date) {
 }
 
 /* ============ Weekly check ============ */
+// The box under a collapsed card: what you remember (this browser only). Ctrl+Enter shows the answer;
+// ↓ / ↑ on the last / first line go to the next / previous card's box.
+function checkBox(card, reveal) {
+  const t = h('textarea', { rows: 1, spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off',
+    placeholder: 'Type what you remember', 'aria-label': 'What you remember' });
+  t.value = typedFor(card.id);
+  const grow = () => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; };
+  t.addEventListener('input', () => { setTypedFor(card.id, t.value); grow(); });
+  t.addEventListener('keydown', ev => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); reveal(); return; }
+    if ((ev.key === 'ArrowDown' || ev.key === 'ArrowUp') && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+      const down = ev.key === 'ArrowDown';
+      const edge = down ? !t.value.slice(t.selectionEnd).includes('\n') : !t.value.slice(0, t.selectionStart).includes('\n');
+      if (!edge) return;
+      ev.preventDefault();
+      const boxes = [...document.querySelectorAll('.check-typed textarea')], to = boxes[boxes.indexOf(t) + (down ? 1 : -1)];
+      if (to) { to.focus(); to.setSelectionRange(to.value.length, to.value.length); }
+    }
+  });
+  t.addEventListener('blur', () => { if (renderPending) setTimeout(() => { if (renderPending && !typingFocused()) render(); }, 0); });
+  requestAnimationFrame(grow);
+  return t;
+}
 const checkedDay = () => checkDay ? WEEKDAYS[checkDay - 1] : weekday(today());
 // Sections of a weekday file with only the cards due on date
 const dueSections = (day, date) => sectionsOf(engine.doc(day.file)).map(sec => ({ name: sec.name, cards: sec.cards.filter(c => isDue(c, date)) }));
@@ -493,29 +531,24 @@ function renderCheck() {
   const dueSecs = dueSections(day, date).filter(s => s.cards.length);
   const shown = dueSecs.reduce((n, s) => n + s.cards.length, 0);
   const later = allCards(doc).length - shown;
-  // Hidden until shown: type the cards from memory first (or skip)
-  const hidden = shown && !listShown('check') && !(editing && editing.path === day.file);
-  if (hidden) out.push(recallPanel('check', 'the cards to check'),
-    h('p', { class: 'note hidden-list', text: 'Cards to check are hidden: ' + dueSecs.map(s => s.name + ' ' + s.cards.length).join(' · ') + '.' }));
-  // Typed from memory first: the cards open fully; skipped: each card starts collapsed
-  const typed = typedTexts(curRecall('check')).length > 0;
-  if (!hidden) for (const { name, cards: due } of dueSecs) {
+  for (const { name, cards: due } of dueSecs) {
     const sec = sectionsOf(doc).find(s => s.name === name);
     out.push(h('section', { class: 'sec' },
       h('h2', {}, sec.name, h('span', { class: 'count', text: String(due.length) })),
       due.map(card => {
         const i = sec.cards.indexOf(card);
-        // Collapsed first: only the first line, so the answer can't be peeked at
-        if (!typed && !revealed.has(card.id) && !(editing && editing.id === card.id)) {
+        // Collapsed first: only the first line, so the answer can't be peeked at, and a box to type what you remember
+        if (!revealed.has(card.id) && !(editing && editing.id === card.id)) {
           const reveal = () => { revealed.add(card.id); render(); };
           const line = h('div', { class: 'md' });
           line.append(toDom(firstLine(card.body)));
           line.addEventListener('click', reveal);
           return h('article', { class: 'card collapsed', 'data-id': card.id }, line,
-            h('div', { class: 'actions' }, btn('Show answer', reveal, 'primary')));
+            h('div', { class: 'typed check-typed' }, checkBox(card, reveal)),
+            h('div', { class: 'actions' }, btn('Show answer', reveal, 'primary', 'Show answer (Ctrl+Enter in the box)')));
         }
         return cardView(card, {
-          path: day.file, section: sec.name,
+          path: day.file, section: sec.name, typed: typedFor(card.id).trim(),
           meta: card.meta.moved ? 'Remembered ' + shortDate(card.meta.moved) : null,
           actions: [
             btn('✓ Still know', ev => leave(ev, () => {
@@ -534,8 +567,7 @@ function renderCheck() {
       })));
   }
   if (!shown) out.push(h('p', { class: 'empty', text: 'Nothing to check for ' + day.name + '.' }));
-  else if (!hidden) out.splice(1, 0, recallBar('check'),
-    h('p', { class: 'note', text: typed ? 'Check what you typed, then decide for each card.' : 'Try to recall each card, then tap Show answer and decide.' }));
+  else out.splice(1, 0, h('p', { class: 'note', text: 'Type what you remember under a card, then tap Show answer to compare it side by side. What you type stays on this device, for today.' }));
   if (later) {
     out.push(h('p', { class: 'note' }, plural(later, 'card') + ' remembered today — they come up next ' + day.name + '. ',
       btn(showLater ? 'Hide' : 'Show', () => { showLater = !showLater; render(); }, 'link')));
@@ -668,7 +700,7 @@ function promptSettings() {
 function setTab(t) {
   autoSave();
   // Filling Prepared, then back to type today's cards: Today and the weekly check are hidden again
-  if (t === 'prepared') { hideList('today'); hideList('check'); }
+  if (t === 'prepared') hideList('today');
   tab = t; store.set('wd.tab', t); menuFor = null; recordingShortcut = null;
   render();
   window.scrollTo(0, 0);
@@ -716,11 +748,11 @@ function wire() {
     recordingShortcut = null;
     SHORTCUTS[kind].save(sc, SHORTCUTS[kind].name + ': ' + shortcutLabel(sc) + '.');
   }, true);
-  // Copy for AI check from the keyboard: the weekly check's lists on that tab, Today's anywhere else
+  // Copy for AI check from the keyboard: Today's lists, from any tab
   document.addEventListener('keydown', ev => {
     if (!matchesShortcut(ev, copyShortcutOf(engine.state()))) return;
     ev.preventDefault();
-    copyCheck(tab === 'check' ? 'check' : 'today');
+    copyCheck('today');
   });
   document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
   $('#loginRedirect').addEventListener('click', () => dbx.startLogin(true).catch(handleErr));
@@ -733,7 +765,7 @@ function wire() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       // Back after a long break (say, from morning to midday): Today's list is hidden again for recall
-      if (hiddenAt && Date.now() - hiddenAt > LIST_HIDE_AFTER) { hideList('today'); hideList('check'); }
+      if (hiddenAt && Date.now() - hiddenAt > LIST_HIDE_AFTER) hideList('today');
       backgroundRender(); sync();
     } else { hiddenAt = Date.now(); autoSave(); flush(); }
   });
@@ -749,7 +781,7 @@ function wire() {
   setInterval(() => { if (today() !== day) { day = today(); backgroundRender(); } }, 60000);
 }
 function start() {
-  for (const k of ['today', 'check']) if (editingIn(k)) setListShown(k, true);   // a card was being edited: keep its list open
+  if (editingIn('today')) setListShown('today', true);   // a card was being edited: keep the list open
   show('app');
   render();
   if (editing) focusEditor();

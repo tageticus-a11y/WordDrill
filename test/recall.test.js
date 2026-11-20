@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf } from '../js/recall.js';
+import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, checkTypedFor } from '../js/recall.js';
 
 test('typed cards are kept for the same date only', () => {
   const saved = { date: '2026-11-16', items: [{ id: 'a', text: 'tun' }] };
@@ -39,4 +39,12 @@ test('Copy for AI check shortcut: Ctrl+Shift+1 unless changed or turned off', ()
   assert.equal(copyShortcutOf({ aiShortcut: 'Alt+KeyC' }), 'Alt+KeyC');
   assert.equal(copyShortcutOf({ aiShortcut: '' }), '');
   assert.equal(copyShortcutOf({ aiShortcut: null }), 'Ctrl+Shift+Digit1');
+});
+
+test('weekly check: typed text per card is kept for the same date only', () => {
+  const saved = { date: '2026-11-20', byId: { k3: 'տուն' } };
+  assert.equal(checkTypedFor(saved, '2026-11-20'), saved);
+  assert.deepEqual(checkTypedFor(saved, '2026-11-21'), { date: '2026-11-21', byId: {} });
+  assert.deepEqual(checkTypedFor({ date: '2026-11-20' }, '2026-11-20'), { date: '2026-11-20', byId: {} });
+  assert.deepEqual(checkTypedFor(null, '2026-11-20'), { date: '2026-11-20', byId: {} });
 });

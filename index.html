@@ -121,6 +121,14 @@
   .md th { background: var(--box); color: var(--box-ink); font-weight: 600; }
   .md code { padding: 1px 5px; border-radius: 5px; background: var(--box); color: var(--box-ink); font: .88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .card.collapsed .md { cursor: pointer; }
+  .check-typed { margin: 8px 0 0; }
+  /* Weekly check: what you typed next to the card */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .compare-typed { border-right: 1px solid var(--rule); padding-right: 14px; min-width: 0; }
+  .compare-card { min-width: 0; }
+  .compare .label { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+  .typed-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  @media (max-width: 340px) { .compare { grid-template-columns: 1fr; } .compare-typed { border-right: 0; padding-right: 0; border-bottom: 1px solid var(--rule); padding-bottom: 8px; } }
   .tool.u { text-decoration: underline; text-underline-offset: 3px; }
   .tool.box { font-family: ui-monospace, Consolas, monospace; font-size: 14px; }
   .md { -webkit-user-select: text; user-select: text; }
