@@ -5,6 +5,7 @@
 
 import { weekFile, archiveFile } from './dates.js';
 import { normalizeBody } from './format.js';
+import { HR_RE } from './markdown.js';
 
 export const CURRENT = 'current.md';
 export const STATE = 'state.json';
@@ -158,7 +159,14 @@ export function moveSectionPlan(state, key, dir) {
 }
 
 /* ---- Split and merge ---- */
-export const JOIN = '\n\n';
+// Merged cards are separated by a horizontal line (---)
+export const JOIN = '\n\n---\n\n';
+// The separator line at the edge of a split part goes (it separated the two cards)
+const dropEdgeRule = (body, atEnd) => {
+  const lines = body.split('\n');
+  if (HR_RE.test(lines[atEnd ? lines.length - 1 : 0])) { if (atEnd) lines.pop(); else lines.shift(); }
+  return normalizeBody(lines.join('\n'));
+};
 /**
  * Splits a card at pos of text (the editor's text): the part before stays in the card, the part after
  * becomes a new card right below with the same meta (so it is due in the same weekly check). null if a
@@ -166,7 +174,8 @@ export const JOIN = '\n\n';
  */
 export function splitPlan(path, section, card, index, text, pos) {
   // spaces at the cut go too (a split between two words leaves no space at the edges)
-  const a = normalizeBody(text.slice(0, pos).replace(/[ \t]+$/, '')), b = normalizeBody(text.slice(pos).replace(/^[ \t]+/, ''));
+  const a = dropEdgeRule(normalizeBody(text.slice(0, pos).replace(/[ \t]+$/, '')), true);
+  const b = dropEdgeRule(normalizeBody(text.slice(pos).replace(/^[ \t]+/, '')), false);
   if (!a || !b) return null;
   const fresh = { id: newId(), meta: { ...card.meta }, body: b };
   return {

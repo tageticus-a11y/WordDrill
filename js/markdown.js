@@ -5,6 +5,9 @@
 const QUOTE_RE = /^ {0,3}> ?(.*)$/;
 const UL_RE = /^ {0,3}[-*+][ \t]+(.*)$/;
 const OL_RE = /^ {0,3}\d{1,9}[.)][ \t]+(.*)$/;
+// # Heading … ###### Heading, and a horizontal line: --- or *** or ___ (3 or more, spaces allowed)
+const HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
+export const HR_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const FENCE_RE = /^ {0,3}```/;   // ``` … ``` block: shown in a box as is (e.g. etymology)
 const FENCE_END_RE = /^ {0,3}```[ \t]*$/;
 // Table: a header row with |, then a delimiter row like | --- | :---: |, then rows with |
@@ -20,7 +23,7 @@ export function splitRow(line) {
 const isTableAt = (lines, i) => i + 1 < lines.length && lines[i].includes('|') && lines[i + 1].includes('|')
   && TABLE_DELIM_RE.test(lines[i + 1]) && splitRow(lines[i]).length === splitRow(lines[i + 1]).length;
 
-/** md → [{ t: 'p', lines: [inline[]] } | { t: 'quote', blocks } | { t: 'ul'|'ol', items: [inline[]] }] */
+/** md → [{ t: 'p', lines: [inline[]] } | { t: 'quote', blocks } | { t: 'ul'|'ol', items: [inline[]] } | { t: 'h', level, c } | { t: 'hr' } | …] */
 export function parseBlocks(md) {
   const lines = String(md || '').replace(/\r\n?/g, '\n').split('\n');
   const blocks = [];
@@ -34,6 +37,13 @@ export function parseBlocks(md) {
       while (i < lines.length && !FENCE_END_RE.test(lines[i])) inner.push(lines[i++]);
       i++;   // the closing fence (or the end of the card)
       blocks.push({ t: 'code', text: inner.join('\n') });
+    } else if (HR_RE.test(line)) {
+      blocks.push({ t: 'hr' });
+      i++;
+    } else if (HEADING_RE.test(line)) {
+      const m = line.match(HEADING_RE);
+      blocks.push({ t: 'h', level: m[1].length, c: parseInline(m[2]) });
+      i++;
     } else if (isTableAt(lines, i)) {
       const head = splitRow(line);
       const align = splitRow(lines[i + 1]).map(c => (c.endsWith(':') ? (c.startsWith(':') ? 'center' : 'right') : c.startsWith(':') ? 'left' : null));
@@ -57,6 +67,7 @@ export function parseBlocks(md) {
     } else {
       const ls = [];
       while (i < lines.length && lines[i].trim() && !QUOTE_RE.test(lines[i]) && !UL_RE.test(lines[i]) && !OL_RE.test(lines[i]) && !FENCE_RE.test(lines[i])
+        && !HR_RE.test(lines[i]) && !HEADING_RE.test(lines[i])
         && !(ls.length && isTableAt(lines, i)))
         ls.push(parseInline(lines[i++].trim()));
       blocks.push({ t: 'p', lines: ls });
@@ -90,7 +101,8 @@ export function parseInline(s) {
 /** Plain text without markup (search) */
 export function plainText(md) {
   const inl = xs => xs.map(x => (x.t === 'text' || x.t === 'code' ? x.v : inl(x.c))).join('');
-  const blk = bs => bs.map(b => b.t === 'p' ? b.lines.map(inl).join('\n') : b.t === 'quote' ? blk(b.blocks)
+  const blk = bs => bs.filter(b => b.t !== 'hr').map(b => b.t === 'p' ? b.lines.map(inl).join('\n') : b.t === 'quote' ? blk(b.blocks)
+    : b.t === 'h' ? inl(b.c)
     : b.t === 'code' ? b.text : b.t === 'table' ? [b.head, ...b.rows].map(r => r.map(inl).join(' | ')).join('\n')
     : b.items.map(inl).join('\n')).join('\n');
   return blk(parseBlocks(md));
@@ -104,6 +116,8 @@ export function toDom(md, doc = document) {
     : x.t === 'code' ? el('code', [doc.createTextNode(x.v)]) : el(TAGS[x.t], inl(x.c))));
   const blk = bs => bs.map(b => {
     if (b.t === 'code') return el('pre', [doc.createTextNode(b.text)]);
+    if (b.t === 'hr') return doc.createElement('hr');
+    if (b.t === 'h') return el('h' + b.level, inl(b.c));
     if (b.t === 'p') return el('p', b.lines.flatMap((l, i) => (i ? [doc.createElement('br'), ...inl(l)] : inl(l))));
     if (b.t === 'quote') return el('blockquote', blk(b.blocks));
     if (b.t === 'table') {
@@ -187,19 +201,29 @@ export function toggleFence(value, start, end) {
 /** (a table's first line shows only its first cell, so the rest of the row stays hidden) */
 export function firstLine(md) {
   const lines = String(md || '').split('\n');
-  const i = lines.findIndex(l => l.trim() && !FENCE_RE.test(l));
+  const i = lines.findIndex(l => l.trim() && !FENCE_RE.test(l) && !HR_RE.test(l));
   if (i < 0) return '';
   return isTableAt(lines, i) ? splitRow(lines[i])[0] : lines[i].trim();
 }
 
 /** Inserts an empty table (2 columns, 2 rows) on the line after the cursor; the first cell is selected */
 export function insertTable(value, start, end) {
+  return insertBlock(value, end, '| Word | Meaning |\n| --- | --- |\n|  |  |\n|  |  |', 2, 4);
+}
+/** Inserts a horizontal line (---) on the line after the cursor, with blank lines around it; the cursor goes below it */
+export function insertRule(value, start, end) {
+  const r = insertBlock(value, end, '---', 3, 0);
+  // the cursor after the line: on the blank line below it, or at the end
+  const at = Math.min(r.value.length, r.start + (r.value.slice(r.start, r.start + 2) === '\n\n' ? 2 : 1));
+  return { value: r.value, start: at, end: at };
+}
+// Puts block on its own after the line with the cursor, separated by blank lines; selects [from, from + len) inside it
+function insertBlock(value, end, block, from, len) {
   let le = value.indexOf('\n', end);
   if (le < 0) le = value.length;
   const before = value.slice(0, le), after = value.slice(le);
   const lead = !before.trim() ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
-  const table = '| Word | Meaning |\n| --- | --- |\n|  |  |\n|  |  |';
-  const v = before + lead + table + (after.startsWith('\n\n') || !after ? '' : after.startsWith('\n') ? '\n' : '\n\n') + after;
-  const s = before.length + lead.length + 2;
-  return { value: v, start: s, end: s + 4 };
+  const v = before + lead + block + (after.startsWith('\n\n') || !after ? '' : after.startsWith('\n') ? '\n' : '\n\n') + after;
+  const s = before.length + lead.length + from;
+  return { value: v, start: s, end: s + len };
 }

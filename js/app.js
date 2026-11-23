@@ -16,9 +16,9 @@ import { createVersions } from './versions.js';
 import { mountTimer } from './timer-ui.js';
 import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, DEFAULT_SHORTCUT } from './timer.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
-import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
+import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '24';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '25';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -282,9 +282,10 @@ function renderEditor() {
     h('div', { class: 'toolbar' },
       tool('B', 'Bold (Ctrl+B)', () => wrap('**'), 'b'), tool('I', 'Italic (Ctrl+I)', () => wrap('*'), 'i'),
       tool('U', 'Underline (Ctrl+U): ~text~', () => wrap('~'), 'u'),
-      tool('❝', 'Quote', () => prefix('> ')), tool('•', 'List', () => prefix('- ')), tool('1.', 'Numbered list', () => prefix('1. ')),
+      tool('H', 'Heading: # at the start of the line', () => prefix('# '), 'h'), tool('❝', 'Quote', () => prefix('> ')), tool('•', 'List', () => prefix('- ')), tool('1.', 'Numbered list', () => prefix('1. ')),
       tool('{ }', 'Box, e.g. for etymology', () => set(toggleFence(t.value, t.selectionStart, t.selectionEnd)), 'box'),
       tool('⊞', 'Table', () => set(insertTable(t.value, t.selectionStart, t.selectionEnd)), 'table'),
+      tool('―', 'Line (---)', () => set(insertRule(t.value, t.selectionStart, t.selectionEnd)), 'rule'),
       earlier.length ? tool('↺ ' + earlier.length, 'Earlier versions', () => { list.hidden = !list.hidden; }, 'hist') : null),
     t,
     list,
