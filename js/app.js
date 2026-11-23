@@ -16,7 +16,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '21';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '22';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -430,6 +430,16 @@ function recallPanel(k, what) {
     if (r.items.length) focusRecall = r.items[Math.max(0, i - 1)].id;
     render();
   };
+  // Enter: to an empty box right below, or a new one; nothing from an empty box (no piles of empty cards)
+  const next = it => {
+    if (!String(it.text || '').trim()) return;
+    const below = r.items[r.items.indexOf(it) + 1];
+    if (below && !String(below.text || '').trim()) {
+      const b = document.querySelector('.recall textarea[data-rid="' + below.id + '"]');
+      if (b) { b.focus(); return; }
+    }
+    addAfter(it);
+  };
   const box = (it, i) => {
     // No spellcheck or autocorrect: the point is to see your own spelling
     const t = h('textarea', { rows: 1, spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off',
@@ -437,9 +447,20 @@ function recallPanel(k, what) {
     t.value = it.text;
     const grow = () => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; };
     t.addEventListener('input', () => { it.text = t.value; saveRecall(k); grow(); updateRecallButtons(); });
+    // Enter (Return on the phone) starts the next card; Shift+Enter adds a line inside this one. Backspace in an
+    // empty box stays there (it never runs on into the card above); ✕ removes a box.
+    let lineBreak = false;
+    t.addEventListener('beforeinput', ev => {
+      // The phone's keyboards (also custom ones) send Return as an input, not always as a key press
+      const enter = ev.inputType === 'insertLineBreak' || ev.inputType === 'insertParagraph' || (ev.inputType === 'insertText' && ev.data === '\n');
+      if (!enter) return;
+      if (lineBreak) { lineBreak = false; return; }
+      ev.preventDefault();
+      next(it);
+    });
     t.addEventListener('keydown', ev => {
-      if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); addAfter(it); }
-      else if (ev.key === 'Backspace' && !t.value && r.items.length > 1) { ev.preventDefault(); remove(it); }
+      if (ev.key === 'Enter' && ev.shiftKey && !ev.ctrlKey && !ev.metaKey) { lineBreak = true; return; }
+      if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); next(it); }
       // ↓ on the last line goes to the box below, ↑ on the first line to the box above (nothing past the ends)
       else if ((ev.key === 'ArrowDown' || ev.key === 'ArrowUp') && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
         const down = ev.key === 'ArrowDown';
@@ -470,9 +491,9 @@ function recallPanel(k, what) {
   updateRecallButtons();
   return h('section', { class: 'sec recall' },
     h('h2', {}, 'Recall', count),
-    h('p', { class: 'note', text: 'Type every card you remember, in any order, then show ' + what + '. Ctrl+Enter starts the next card. Kept on this device only, for today.' }),
+    h('p', { class: 'note', text: 'Type every card you remember, in any order, then show ' + what + '. Enter (Return) starts the next card, Shift+Enter a new line in a card. Kept on this device only, for today.' }),
     r.items.map(box),
-    btn('+ Next card', () => addAfter(r.items[r.items.length - 1]), 'add', '+ Next card (Ctrl+Enter)'),
+    btn('+ Next card', () => addAfter(r.items[r.items.length - 1]), 'add', '+ Next card (Enter)'),
     h('div', { class: 'row' }, showBtn, copyBtn, clearBtn));
 }
 let updateRecallButtons = () => {};
