@@ -92,8 +92,29 @@ export function shortcutLabel(shortcut) {
 
 /** Milestones of a run: at 2/5 and 4/5 of the whole time (the line under the header shows them) */
 export const MILESTONES = [0.4, 0.8];
-/** Milestones passed between two moments (elapsed ms): [{ k (1-based), at }] */
+/**
+ * The cycles after which the milestones come: 2/5 and 4/5 of the run, moved to the nearest cycle end, so a
+ * milestone and a cycle end are one moment (one sound). Never at the very end; a short run may have fewer.
+ */
+export function milestoneCycles(total) {
+  const out = [];
+  for (const f of MILESTONES) {
+    const n = Math.min(total - 1, Math.max(1, Math.round(f * total)));
+    if (n >= 1 && (!out.length || n > out[out.length - 1])) out.push(n);
+  }
+  return out;
+}
+/** Milestones passed between two moments (elapsed ms): [{ k (1-based), n (cycle), at }] */
 export function milestonesPassed(s, from, to) {
-  return MILESTONES.map((f, i) => ({ k: i + 1, at: Math.round(f * s.total * CYCLE_MS) }))
-    .filter(m => m.at > from && m.at <= to && m.at < s.total * CYCLE_MS);
+  return milestoneCycles(s.total).map((n, i) => ({ k: i + 1, n, at: n * CYCLE_MS })).filter(m => m.at > from && m.at <= to);
+}
+/**
+ * The part of the run a cycle is in (1, 2, 3: green, yellow, red; split by the milestones) and whether it shows
+ * the colour: the first cycle of a part does, the next doesn't, and so on.
+ */
+export function partOf(total, cycle) {
+  const ms = milestoneCycles(total);
+  const part = 1 + ms.filter(n => cycle > n).length;
+  const start = part === 1 ? 1 : ms[part - 2] + 1;
+  return { part, colored: (cycle - start) % 2 === 0 };
 }

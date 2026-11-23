@@ -16,7 +16,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '20';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '21';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -699,8 +699,8 @@ function promptSettings() {
 /* ============ Rendering ============ */
 function setTab(t) {
   autoSave();
-  // Filling Prepared, then back to type today's cards: Today and the weekly check are hidden again
-  if (t === 'prepared') hideList('today');
+  // Filling Prepared or doing the weekly check, then back to type today's cards: Today is hidden again
+  if (t === 'prepared' || t === 'check') hideList('today');
   tab = t; store.set('wd.tab', t); menuFor = null; recordingShortcut = null;
   render();
   window.scrollTo(0, 0);

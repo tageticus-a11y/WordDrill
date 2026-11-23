@@ -17,14 +17,14 @@
   /* Night ink: deep navy paper with a cornflower accent (a cousin of Stanzas' blue-grey, without its amber) */
   :root {
     --paper: #EDF2F8; --surface: #FFFFFF; --ink: #17243A; --muted: #56677F; --rule: #D0DAE6;
-    --accent: #2A62B8; --on-accent: #FFFFFF; --quote: #8AAEE0; --error: #B3402F; --ok: #2E7D5B; --alert: #D6382F; --alert-tint: rgba(214, 56, 47, .12); --box: #F3F0FA; --box-ink: #4B3F78;
+    --accent: #2A62B8; --on-accent: #FFFFFF; --quote: #8AAEE0; --error: #B3402F; --ok: #2E7D5B; --alert: #D6382F; --warn: #C98A00; --alert-tint: rgba(214, 56, 47, .12); --box: #F3F0FA; --box-ink: #4B3F78;
     --tint: rgba(42, 98, 184, .08);
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --paper: #0F1724; --surface: #172235; --ink: #E2EAF4; --muted: #8C9DB4; --rule: #263550;
-      --accent: #7AAEF7; --on-accent: #0A1424; --quote: #4C78B8; --error: #E9806F; --ok: #74C99A; --alert: #FF5A4E; --alert-tint: rgba(255, 90, 78, .16); --box: #1E1B33; --box-ink: #C9BEF5;
+      --accent: #7AAEF7; --on-accent: #0A1424; --quote: #4C78B8; --error: #E9806F; --ok: #74C99A; --alert: #FF5A4E; --warn: #F2C14E; --alert-tint: rgba(255, 90, 78, .16); --box: #1E1B33; --box-ink: #C9BEF5;
       --tint: rgba(122, 174, 247, .12);
       color-scheme: dark;
     }
@@ -168,29 +168,30 @@
   .typed .icon { flex: none; color: var(--muted); }
   .typed textarea { transition: border-color .3s ease; }
   /* While the timer runs, a line under the header fills from left to right over the WHOLE run
-     (--timer-total 0…1), with milestones at 2/5 and 4/5 of the time (the run in parts of 2/5, 2/5 and 1/5) */
+     (--timer-total 0…1) in the colour of the part (green, yellow, red), with ticks at the milestones (about 2/5
+     and 4/5 of the time, on cycle ends: --timer-m1, --timer-m2) */
   header.top::after {
-    content: ''; position: absolute; left: 0; bottom: -1px; height: 4px; width: 0; background: var(--timer-color);
+    content: ''; position: absolute; left: 0; bottom: -1px; height: 4px; width: 0; background: var(--timer-part, var(--timer-color));
   }
   .timer-running header.top::after { width: calc(var(--timer-total, 0) * 100%); }
   .timer-running header.top::before {
     content: ''; position: absolute; left: 0; right: 0; bottom: -3px; height: 8px; z-index: 2; pointer-events: none;   /* the ticks, over the fill */
     background:
-      linear-gradient(var(--ink), var(--ink)) calc(40% - 1px) 0 / 3px 100% no-repeat,
-      linear-gradient(var(--ink), var(--ink)) calc(80% - 1px) 0 / 3px 100% no-repeat;
+      linear-gradient(var(--ink), var(--ink)) calc(var(--timer-m1, 40%) - 1px) 0 / 3px 100% no-repeat,
+      linear-gradient(var(--ink), var(--ink)) calc(var(--timer-m2, 80%) - 1px) 0 / 3px 100% no-repeat;
   }
   .timer-running header.top::after { z-index: 1; }
   /* On a phone (the eyes are on the keyboard) the whole app takes the cycle colour, and flashes three times
      when a new cycle starts; a computer keeps its colours */
   @media (pointer: coarse) {
     body, header.top { transition: background-color .5s ease; }
-    .timer-running body, .timer-running header.top { background: color-mix(in srgb, var(--timer-color) 15%, var(--paper)); }
+    .timer-running body, .timer-running header.top { background: color-mix(in srgb, var(--timer-part, var(--timer-color)) 15%, var(--paper)); }
     .timer-flash body, .timer-flash header.top { animation: timer-flash .4s ease-in-out 3; }
   }
-  @keyframes timer-flash { 50% { background: color-mix(in srgb, var(--timer-color) 80%, var(--paper)); } }
+  @keyframes timer-flash { 50% { background: color-mix(in srgb, var(--timer-part, var(--timer-color)) 80%, var(--paper)); } }
   /* Everywhere, the Recall boxes flash three times too */
   .timer-flash .typed textarea { animation: timer-flash-box .4s ease-in-out 3; }
-  @keyframes timer-flash-box { 50% { background: var(--timer-color); } }
+  @keyframes timer-flash-box { 50% { background: var(--timer-part, var(--timer-color)); } }
   @media (prefers-reduced-motion: reduce) { .timer-flash body, .timer-flash header.top, .timer-flash .typed textarea { animation: none; } }
   /* While the timer runs, the boxes show the colour of the cycle (red, green in turn) */
   /* …and fill from left to right as the cycle goes (--timer-progress 0…1) */

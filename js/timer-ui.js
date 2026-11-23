@@ -4,11 +4,12 @@
 // Sounds are made with Web Audio (a ding at the end of each cycle, two pitches in turn, three beeps at the end),
 // plus vibration where the device can (Vibrate, on by default; not on iPhone, see vibrate()).
 
-import { timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, milestonesPassed, elapsedOf, matchesShortcut, shortcutLabel } from './timer.js';
+import { timerState, timerView, startTimer, pauseTimer, resetTimer, setTotal, cycleEnds, milestonesPassed, milestoneCycles, partOf, elapsedOf, matchesShortcut, shortcutLabel } from './timer.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
-const COLORS = ['var(--alert)', 'var(--ok)'];    // cycles in turn: red, green
-const colorOf = cycle => COLORS[(cycle - 1) % COLORS.length];
+// Traffic lights: the three parts of a run (split by the milestones) are green, yellow, red. In each part the
+// cycles take turns: one in the part's colour, one neutral (then only the background shows the timer runs).
+const PART_COLORS = ['var(--ok)', 'var(--warn)', 'var(--alert)'], NEUTRAL = 'var(--muted)';
 
 function el(tag, attrs = {}, ...kids) {
   const e = tag.startsWith('svg:') ? document.createElementNS(SVG, tag.slice(4)) : document.createElement(tag);
@@ -35,9 +36,19 @@ let audio = null;
 function audioCtx() {   // created and resumed inside a tap or key press (browsers allow sound only after one)
   const C = window.AudioContext || window.webkitAudioContext;
   if (!C) return null;
+  if (audio && audio.state === 'closed') audio = null;
   if (!audio) audio = new C();
-  if (audio.state === 'suspended') audio.resume().catch(() => {});
+  // 'suspended', or on iOS 'interrupted' after the app was in the background or another app took the sound
+  if (audio.state !== 'running') audio.resume().catch(() => {});
   return audio;
+}
+// On Start (a tap or key press): an audio context that isn't running is replaced by a new one, and a silent
+// sound unlocks the output. iOS can leave the old context mute after the app was in the background.
+function wakeAudio() {
+  if (audio && audio.state !== 'running') { try { audio.close(); } catch (e) {} audio = null; }
+  const c = audioCtx();
+  if (!c) return;
+  try { const s = c.createBufferSource(); s.buffer = c.createBuffer(1, 1, 22050); s.connect(c.destination); s.start(0); } catch (e) {}
 }
 function tone(c, freq, at, dur, type = 'sine', vol = 0.25) {
   const o = c.createOscillator(), g = c.createGain(), t = c.currentTime + at;
@@ -52,12 +63,18 @@ const bell = (c, freq, at) => { tone(c, freq, at, 1.1); tone(c, freq * 2, at, 0.
 const SOUNDS = {
   odd: c => { tone(c, 880, 0, 1.3); tone(c, 1760, 0, 0.5, 'sine', 0.06); },
   even: c => { tone(c, 660, 0, 1.3); tone(c, 1320, 0, 0.5, 'sine', 0.06); },
-  // Milestones (2/5 and 4/5 of the run): the same soft bell, but rising notes: two for the first, three for the second
+  // Milestones (about 2/5 and 4/5 of the run, on a cycle end): the same soft bell, but rising notes: two for the
+  // first, three for the second. They replace that cycle's ding.
   milestone1: c => { bell(c, 660, 0); bell(c, 990, 0.2); },
   milestone2: c => { bell(c, 660, 0); bell(c, 990, 0.2); bell(c, 1320, 0.4); },
   final: c => { tone(c, 988, 0, 0.22, 'triangle', 0.3); tone(c, 988, 0.32, 0.22, 'triangle', 0.3); tone(c, 1319, 0.64, 1, 'triangle', 0.3); }
 };
-function play(name) { const c = audioCtx(); if (c) try { SOUNDS[name](c); } catch (e) {} }
+function play(name) {
+  const c = audioCtx();
+  if (!c) return;
+  const go = () => { try { SOUNDS[name](c); } catch (e) {} };
+  if (c.state === 'running') go(); else c.resume().then(go, () => {});   // not into a context that is still waking up
+}
 
 // ---- Vibration ----
 // The Vibration API where there is one (Android Chrome). iPhones have none: the old haptic trick (a script
@@ -113,7 +130,7 @@ export function mountTimer({ button, panel, store, settings }) {
   function toggle() {
     const now = Date.now();
     if (timerView(s, now).running) { s = pauseTimer(s, now); stopLoop(); }
-    else { audioCtx(); s = startTimer(s, now); signal('even'); startLoop(); }
+    else { wakeAudio(); s = startTimer(s, now); signal('even'); startLoop(); }
     last = elapsedOf(s, now);
     save(); draw();
   }
@@ -135,7 +152,8 @@ export function mountTimer({ button, panel, store, settings }) {
   function draw() {
     const v = timerView(s, Date.now());
     const idle = !v.running && s.elapsed === 0;
-    const color = colorOf(v.cycle);
+    const part = partOf(v.total, v.cycle), partColor = PART_COLORS[part.part - 1];
+    const color = part.colored ? partColor : NEUTRAL;
     mini.set(idle ? 0 : v.progress, color);
     miniText.textContent = idle ? '⏱' : String(v.cyclesLeft);
     button.classList.toggle('running', v.running);
@@ -146,7 +164,11 @@ export function mountTimer({ button, panel, store, settings }) {
     const root = document.documentElement;
     root.classList.toggle('timer-running', v.running);
     if (v.running) {
-      root.style.setProperty('--timer-color', color);
+      root.style.setProperty('--timer-color', color);          // this cycle: the part's colour or neutral
+      root.style.setProperty('--timer-part', partColor);       // the part's colour (background, line, flash)
+      const ms = milestoneCycles(v.total);                     // where the ticks on the line are
+      root.style.setProperty('--timer-m1', ms[0] ? (ms[0] / v.total * 100).toFixed(2) + '%' : '-10px');
+      root.style.setProperty('--timer-m2', ms[1] ? (ms[1] / v.total * 100).toFixed(2) + '%' : '-10px');
       root.style.setProperty('--timer-progress', v.progress.toFixed(4));
       root.style.setProperty('--timer-total', ((v.cycle - 1 + v.progress) / v.total).toFixed(4));   // the whole run
       if (shownCycle != null && shownCycle !== v.cycle) {
