@@ -18,7 +18,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '23';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '24';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -88,6 +88,30 @@ function h(tag, attrs, ...kids) {
   }
   for (const k of kids.flat()) if (k != null && k !== false) e.append(k);
   return e;
+}
+// Runs fn and puts the page back where it was: iOS scrolls on its own when a text box changes or
+// shrinks for a moment (the editor then jumped to the top of the card)
+function keepScroll(fn) {
+  const x = window.scrollX, y = window.scrollY;
+  fn();
+  if (window.scrollX !== x || window.scrollY !== y) window.scrollTo(x, y);
+}
+// Fits a text box to its text. Growing needs no measuring; shrinking sets the height to auto for a
+// moment, which makes the page shorter, so the scroll position is kept.
+function fitHeight(t) {
+  if (t.scrollHeight > t.clientHeight) { t.style.height = t.scrollHeight + 2 + 'px'; return; }
+  keepScroll(() => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; });
+}
+// Changes only the part of the text that differs (a toolbar edit), instead of replacing the whole value,
+// which moves the caret to the end and makes iOS scroll there and back
+function replaceText(t, value) {
+  const old = t.value;
+  if (old === value) return;
+  let a = 0;
+  while (a < old.length && a < value.length && old[a] === value[a]) a++;
+  let b = 0;
+  while (b < old.length - a && b < value.length - a && old[old.length - 1 - b] === value[value.length - 1 - b]) b++;
+  t.setRangeText(value.slice(a, value.length - b), a, old.length - b, 'preserve');
 }
 const btn = (text, onclick, cls, title) => h('button', { type: 'button', class: cls, onclick, title, 'aria-label': title }, text);
 const shortDate = d => { if (!d) return ''; const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); };
@@ -219,8 +243,8 @@ function renderEditor() {
   const e = editing;
   const t = h('textarea', { rows: 3, spellcheck: 'true', autocapitalize: 'sentences', placeholder: 'Word, meaning, examples…' });
   t.value = e.text;
-  const grow = () => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; };
-  const set = r => { t.value = r.value; t.setSelectionRange(r.start, r.end); e.text = t.value; saveDraft(); grow(); };
+  const grow = () => fitHeight(t);
+  const set = r => { replaceText(t, r.value); t.setSelectionRange(r.start, r.end); e.text = t.value; saveDraft(); grow(); };
   const wrap = m => set(toggleWrap(t.value, t.selectionStart, t.selectionEnd, m));
   const prefix = p => set(toggleLinePrefix(t.value, t.selectionStart, t.selectionEnd, p));
   t.addEventListener('input', () => { e.text = t.value; saveDraft(); grow(); });
@@ -243,7 +267,7 @@ function renderEditor() {
   requestAnimationFrame(grow);
   // Toolbar buttons keep the focus (and the selection) in the text box
   const tool = (label, title, fn, cls) => h('button', { type: 'button', class: 'tool ' + (cls || ''), title, 'aria-label': title,
-    onmousedown: ev => ev.preventDefault(), onclick: () => { fn(); t.focus(); } }, label);
+    onmousedown: ev => ev.preventDefault(), onclick: () => keepScroll(() => { t.focus({ preventScroll: true }); fn(); }) }, label);
   const keep = (label, fn, cls) => h('button', { type: 'button', class: cls, onmousedown: ev => ev.preventDefault(), onclick: fn }, label);
   // Earlier texts of this card from this session; picking one puts it in the text box
   const earlier = e.id ? versions.list(e.id) : [];
@@ -252,7 +276,7 @@ function renderEditor() {
     earlier.map(v => keep([h('span', { class: 'when', text: new Date(v.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) }),
       h('span', { class: 'what', text: plainText(v.text).split('\n').join(' · ') })], () => {
       versions.add(e.id, e.text);
-      t.value = v.text; e.text = v.text; saveDraft(); grow(); t.focus();
+      keepScroll(() => { t.value = v.text; e.text = v.text; saveDraft(); grow(); t.focus({ preventScroll: true }); });
     }, 'version')));
   return h('div', { class: 'editor' },
     h('div', { class: 'toolbar' },
@@ -470,7 +494,7 @@ function recallPanel(k, what) {
     const t = h('textarea', { rows: 1, spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off',
       placeholder: i ? 'Next card' : 'Type a card from memory', 'aria-label': 'Card ' + (i + 1), 'data-rid': it.id });
     t.value = it.text;
-    const grow = () => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; };
+    const grow = () => fitHeight(t);
     t.addEventListener('input', () => { it.text = t.value; saveRecall(k); grow(); updateRecallButtons(); });
     // Enter (Return on the phone) starts the next card; Shift+Enter adds a line inside this one. Backspace in an
     // empty box stays there (it never runs on into the card above); ✕ removes a box.
@@ -547,7 +571,7 @@ function checkBox(card, reveal) {
   const t = h('textarea', { rows: 1, spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off',
     placeholder: 'Type what you remember', 'aria-label': 'What you remember' });
   t.value = typedFor(card.id);
-  const grow = () => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; };
+  const grow = () => fitHeight(t);
   t.addEventListener('input', () => { setTypedFor(card.id, t.value); grow(); });
   t.addEventListener('keydown', ev => {
     if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); reveal(); return; }

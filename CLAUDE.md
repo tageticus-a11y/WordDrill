@@ -148,6 +148,7 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - **Editing:**
     - An open editor is stored as a draft (`wd.draft`) and survives reloads.
     - **Autosave:** the open card is saved when the focus leaves it (`autoSave`). Triggers: a click outside the editor (a capture-phase listener on document saves first, then the click does its job), switching tabs, the app going to the background, and a textarea blur not followed by a click within 400 ms (keyboard focus moves; iOS taps without a click). Switching windows (`!document.hasFocus()`) doesn't save. Editor buttons use `mousedown` preventDefault so they keep the focus. Save stays as a button; an empty card is not autosaved.
+    - **No scroll jumps (iOS):** text boxes fit their text with `fitHeight` (grows without measuring; shrinking sets height auto for a moment inside `keepScroll`, which puts the page back). Toolbar edits change only the differing part (`replaceText`, `setRangeText`) instead of replacing the whole value, and refocus with `preventScroll`. Before v24 the { } button made iPhone jump to the top of the card.
     - **Earlier versions:** `js/versions.js` keeps each card's earlier texts for this session only (sessionStorage `wd.versions`, at most 20 per card). The ↺ N button in the editor lists them and puts one back in the box. Nothing of this goes to Dropbox.
   - **Rendering:**
     - Renders caused by sync or a visibility change go through `backgroundRender`, which waits while the editor textarea has focus.
