@@ -7,8 +7,10 @@ import { createDemoDropbox } from './demo.js';
 import { allCards, normalizeBody } from './format.js';
 import { today, weekday, WEEKDAYS, WEEK_FILES, isDue, monthLabel } from './dates.js';
 import {
-  SECTIONS, CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
-  findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp
+  CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
+  findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp,
+  sectionsList, activeSections, sectionKey, addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan,
+  splitPlan, mergePlan
 } from './ops.js';
 import { createVersions } from './versions.js';
 import { mountTimer } from './timer-ui.js';
@@ -16,7 +18,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable } from './markdown.js';
 
-const APP_VERSION = '22';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '23';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -41,7 +43,7 @@ const engine = createEngine({ api: dbx.api, storage: store, key: DEMO ? 'demo.da
 /* ============ UI state ============ */
 let tab = store.get('wd.tab') || 'today';
 let checkDay = null;                        // weekday number picked in Weekly check; null = today
-let archiveKey = SECTIONS[0].key, archiveMonth = null, archiveQuery = '';
+let archiveKey = null, archiveMonth = null, archiveQuery = '';
 let editing = store.get('wd.draft');        // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
@@ -262,7 +264,28 @@ function renderEditor() {
       earlier.length ? tool('↺ ' + earlier.length, 'Earlier versions', () => { list.hidden = !list.hidden; }, 'hist') : null),
     t,
     list,
-    h('div', { class: 'row' }, keep('Save', saveEdit, 'primary'), keep('Cancel', cancelEdit)));
+    h('div', { class: 'row' }, keep('Save', saveEdit, 'primary'), keep('Cancel', cancelEdit),
+      e.id ? h('button', { type: 'button', class: 'split', title: 'Split the card at the cursor: the text after it becomes a new card below',
+        onmousedown: ev => ev.preventDefault(), onclick: () => splitEdit(t.selectionStart) }, '✂ Split here') : null));
+}
+// Splits the card being edited at the cursor: the text before it stays, the rest becomes a new card below
+function splitEdit(pos) {
+  const e = editing, f = e && e.id && findCard(engine.doc(e.path), e.id);
+  if (!f) return;
+  const p = splitPlan(e.path, f.section.name, f.card, f.index, e.text, pos);
+  if (!p) { toast('Put the cursor where the second card should start, then tap Split here.'); return; }
+  if (f.card.body !== e.text) versions.add(e.id, f.card.body);
+  if (revealed.has(e.id)) revealed.add(p.card.id);
+  closeEditor();
+  commit(p.ops, 'Split into two cards.', p.undo);
+}
+// Joins a card with the next one (the lower card's text goes to the end of the upper one)
+function mergeButton(path, section, card, next, nextIndex) {
+  return next ? btn('Merge with next', ev => leave(ev, () => {
+    menuFor = null;
+    const p = mergePlan(path, section, card, next, nextIndex);
+    commit(p.ops, 'Merged into one card.', p.undo);
+  }), null, 'Join this card with the one below it') : null;
 }
 function cancelEdit() {
   const e = editing;
@@ -272,12 +295,12 @@ function cancelEdit() {
   closeEditor();
 }
 const editorFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea');
-const typingFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea, .typed textarea, textarea.prompt');
+const typingFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea, .typed textarea, textarea.prompt, input.area-name');
 
 /* ============ Cards ============ */
 // "Move to…" another section of the same file; Undo puts the card back in its place
 function sectionPicker(path, section, card, index) {
-  const others = SECTIONS.map(x => x.name).filter(n => n !== section);
+  const others = activeSections(engine.state()).map(x => x.name).filter(n => n !== section);
   return h('select', { class: 'move-sec', 'aria-label': 'Move to section', onchange: ev => {
     const to = ev.target.value;
     menuFor = null;
@@ -301,9 +324,10 @@ function cardView(card, { path, section, actions = [], meta, editable = true, ty
     meta ? h('div', { class: 'meta', text: meta }) : null,
     actions.length ? h('div', { class: 'actions' }, actions) : null);
 }
+// The active areas in their order, then any other heading in the file that holds cards (nothing is hidden)
 const sectionsOf = doc => {
-  const names = SECTIONS.map(s => s.name);
-  const extra = doc.sections.map(s => s.name).filter(n => !names.includes(n));
+  const names = activeSections(engine.state()).map(s => s.name);
+  const extra = doc.sections.filter(s => s.cards.length).map(s => s.name).filter((n, i, a) => !names.includes(n) && a.indexOf(n) === i);
   return names.concat(extra).map(name => ({ name, cards: (doc.sections.find(s => s.name === name) || { cards: [] }).cards }));
 };
 
@@ -339,6 +363,7 @@ function renderList(path) {
         h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swap(i - 1) }, '↑'),
         h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
         sectionPicker(path, sec.name, card, i),
+        mergeButton(path, sec.name, card, sec.cards[i + 1], i + 1),
         isToday ? btn('Prepared →', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Prepared.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null,
         btn('Delete', ev => leave(ev, () => { menuFor = null; commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)); }), 'danger')));
       return cardView(card, { path, section: sec.name, actions });
@@ -573,7 +598,7 @@ function renderCheck() {
           meta: card.meta.moved ? 'Remembered ' + shortDate(card.meta.moved) : null,
           actions: [
             btn('✓ Still know', ev => leave(ev, () => {
-              const op = archiveOp(day.file, sec.name, card, date);
+              const op = archiveOp(day.file, sec.name, card, date, sectionKey(sec.name, sectionsList(engine.state())));
               commit(op, 'Archived.', moveOp(op.to, day.file, sec.name, card, {}, i));
             }), 'primary'),
             btn('✗ Forgot', ev => {
@@ -582,7 +607,8 @@ function renderCheck() {
               leave(ev, () => commit(deleteOp(day.file, card.id), 'Removed. The text is copied — paste it into TickTick.', restoreOp(day.file, sec.name, card, i)));
             }),
             btn('⋯', () => { menuFor = menuFor === card.id ? null : card.id; render(); }, 'icon' + (menuFor === card.id ? ' on' : ''), 'More actions'),
-            menuFor === card.id ? h('span', { class: 'more' }, sectionPicker(day.file, sec.name, card, i)) : null
+            menuFor === card.id ? h('span', { class: 'more' }, sectionPicker(day.file, sec.name, card, i),
+              (n => mergeButton(day.file, sec.name, card, n, sec.cards.indexOf(n)))(due[due.indexOf(card) + 1])) : null
           ].filter(Boolean)
         });
       })));
@@ -611,9 +637,12 @@ function renderCheck() {
 
 /* ============ Archive ============ */
 function renderArchive() {
-  const keys = SECTIONS.map(s => s.key).concat(engine.paths('archive/').map(p => p.split('/')[1]))
+  // Active areas first, then removed ones and other folders that have an archive
+  const areas = sectionsList(engine.state()), stored = engine.paths('archive/').map(p => p.split('/')[1]);
+  const keys = areas.filter(s => !s.removed).map(s => s.key).concat(areas.filter(s => s.removed).map(s => s.key).filter(k => stored.includes(k)), stored)
     .filter((k, i, a) => a.indexOf(k) === i);
-  const nameOf = k => (SECTIONS.find(s => s.key === k) || { name: k }).name;
+  if (!keys.includes(archiveKey)) archiveKey = keys[0];
+  const nameOf = k => (areas.find(s => s.key === k) || { name: k }).name;
   const months = engine.paths('archive/' + archiveKey + '/').map(p => p.split('/')[2].replace(/\.md$/, '')).sort().reverse();
   if (!months.includes(archiveMonth)) archiveMonth = months[0] || null;
   const out = [h('div', { class: 'chips' }, keys.map(k => btn(nameOf(k), () => { archiveKey = k; archiveMonth = null; render(); }, k === archiveKey ? 'chip on' : 'chip')))];
@@ -645,13 +674,8 @@ function renderArchive() {
 /* ============ Settings ============ */
 function renderSettings() {
   const n = engine.pending();
-  const targets = targetsOf(engine.state());
   return [
-    h('section', { class: 'sec' }, h('h2', { text: 'Cards per day' }),
-      h('p', { class: 'note', text: 'How many cards each section keeps in Today. ✓ (Remembered) tops a section up from Prepared to this number; Prepared warns when it holds less than this.' }),
-      h('div', { class: 'targets' }, SECTIONS.map(({ name }) => h('label', {}, h('span', { text: name }),
-        h('select', { 'aria-label': name + ' cards per day', onchange: ev => commit(stateOp('targets', { ...targetsOf(engine.state()), [name]: +ev.target.value })) },
-          [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => h('option', { value: v, selected: v === targets[name] }, String(v)))))))),
+    areasSettings(),
     timerSettingsView(),
     promptSettings(),
     h('section', { class: 'sec' }, h('h2', { text: 'Dropbox' }),
@@ -664,6 +688,49 @@ function renderSettings() {
         }))),
     h('p', { class: 'note', text: 'WordDrill version ' + APP_VERSION })
   ];
+}
+
+// Areas (sections): name, cards per day, order; add, rename, remove (state.json "sections" and "targets")
+const AREA_PATHS = [CURRENT, PREPARED, ...WEEK_FILES];
+function applyPlan(p, after) {
+  if (!p || p.error === null) return;
+  if (p.error) { toast(p.error, { error: true }); render(); return; }
+  if (after) after();
+  commit(p.ops, p.message, p.undo);
+}
+function areasSettings() {
+  const state = engine.state(), targets = targetsOf(state);
+  const active = activeSections(state), removed = sectionsList(state).filter(s => s.removed);
+  const docs = () => AREA_PATHS.map(p => engine.doc(p));
+  const rename = (area, value) => applyPlan(renameSectionPlan(engine.state(), area.key, value, AREA_PATHS, docs()), () => {
+    // a card being added in that area goes under the new heading
+    if (editing && editing.section === area.name) { editing.section = value.replace(/\s+/g, ' ').trim(); saveDraft(); }
+  });
+  const rows = active.map((area, i) => h('div', { class: 'area' },
+    h('input', { type: 'text', class: 'area-name', value: area.name, maxlength: '60', 'aria-label': 'Name of ' + area.name, spellcheck: 'false',
+      onchange: ev => rename(area, ev.target.value),
+      onkeydown: ev => { if (ev.key === 'Enter') { ev.preventDefault(); ev.target.blur(); } else if (ev.key === 'Escape') { ev.target.value = area.name; ev.target.blur(); } } }),
+    h('select', { 'aria-label': area.name + ' cards per day', title: 'Cards per day',
+      onchange: ev => commit(stateOp('targets', { ...(engine.state().targets || {}), [area.name]: +ev.target.value })) },
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => h('option', { value: v, selected: v === targets[area.name] }, String(v)))),
+    h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move ' + area.name + ' up', disabled: i === 0,
+      onclick: () => applyPlan(moveSectionPlan(engine.state(), area.key, -1)) }, '↑'),
+    h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move ' + area.name + ' down', disabled: i === active.length - 1,
+      onclick: () => applyPlan(moveSectionPlan(engine.state(), area.key, 1)) }, '↓'),
+    h('button', { type: 'button', class: 'icon danger', title: 'Remove ' + area.name, 'aria-label': 'Remove ' + area.name, disabled: active.length < 2,
+      onclick: () => {
+        const p = removeSectionPlan(engine.state(), area.key, docs(), today());
+        if (p.error || confirm('Remove the area ' + area.name + '? Its archive stays, and adding an area with the same name brings it back.')) applyPlan(p);
+      } }, '✕')));
+  const name = h('input', { type: 'text', class: 'area-name', maxlength: '60', placeholder: 'New area, e.g. Idioms', 'aria-label': 'New area name',
+    onkeydown: ev => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } } });
+  const add = () => applyPlan(addSectionPlan(engine.state(), name.value, engine.paths('archive/').map(p => p.split('/')[1])));
+  return h('section', { class: 'sec' }, h('h2', { text: 'Areas and cards per day' }),
+    h('p', { class: 'note', text: 'The number is how many cards an area keeps in Today: ✓ (Remembered) tops it up from Prepared, and Prepared warns when it holds less. Renaming changes the headings in your files; the archive stays where it is. An area can be removed once it has no cards in Today, Prepared or the weekly check; its archive stays.' }),
+    h('div', { class: 'areas' }, rows),
+    h('div', { class: 'area add-area' }, name, btn('+ Add area', add)),
+    removed.length ? h('p', { class: 'note' }, 'Removed: ',
+      removed.map((s, i) => [i ? ', ' : '', s.name + ' ', btn('Bring back', () => applyPlan(addSectionPlan(engine.state(), s.name)), 'link')])) : null);
 }
 
 // state.json "timer": other keys there are kept

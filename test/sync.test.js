@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEngine } from '../js/sync.js';
 import { parseDoc, allCards, parseState } from '../js/format.js';
-import { addOp, editOp, deleteOp, rememberOp, archiveOp, stateOp, CURRENT } from '../js/ops.js';
+import { addOp, editOp, deleteOp, rememberOp, archiveOp, stateOp, CURRENT, renameSectionPlan } from '../js/ops.js';
 import { WEEK_FILES } from '../js/dates.js';
 
 const CORE = [CURRENT, 'state.json', ...WEEK_FILES];
@@ -215,4 +215,24 @@ test('network failure during sync keeps everything for later', async () => {
   db.fail.push({ on: 'list' });
   await assert.rejects(eng.sync(CORE));
   assert.equal(allCards(eng.doc(CURRENT))[0].body, 'keep');
+});
+
+test('renaming an area rewrites the headings of existing files, creates no missing ones, survives a lost reply', async () => {
+  const db = fakeDropbox();
+  db.put(CURRENT, '<!-- worddrill v1 -->\n\n## Armenian\n\n<!-- card id=a -->\nalpha\n');
+  db.put(WEEK, '<!-- worddrill v1 -->\n\n## Armenian\n\n<!-- card id=w moved=2026-11-05 -->\nweek\n');
+  const eng = createEngine({ api: db.api, storage: memStorage() });
+  await eng.sync(CORE);
+  const plan = renameSectionPlan({}, 'armenian', 'Հայերեն', [CURRENT, 'prepared.md', ...WEEK_FILES], [eng.doc(CURRENT), eng.doc(WEEK)]);
+  plan.ops.forEach(op => eng.add(op));
+  db.fail.push({ on: 'upload', kind: 'after-write', path: WEEK });
+  await assert.rejects(eng.flush());
+  await eng.sync(CORE);
+  assert.equal(eng.pending(), 0);
+  assert.match(db.text(CURRENT), /## Հայերեն/);
+  assert.match(db.text(WEEK), /## Հայերեն/);
+  assert.equal(totalCards(db), 2);
+  assert.equal(db.files.has('prepared.md'), false);
+  assert.equal(db.files.has('week/1-mon.md'), false);
+  assert.equal(parseState(db.text('state.json')).sections[0].name, 'Հայերեն');
 });

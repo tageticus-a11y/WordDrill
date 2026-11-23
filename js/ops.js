@@ -8,15 +8,18 @@ import { normalizeBody } from './format.js';
 
 export const CURRENT = 'current.md';
 export const STATE = 'state.json';
-export const SECTIONS = [
+// The areas (sections) used while state.json has no "sections" list
+export const DEFAULT_SECTIONS = [
   { key: 'armenian', name: 'Armenian' },
   { key: 'english', name: 'English' },
   { key: 'general', name: 'General' }
 ];
-export const sectionKey = name => {
-  const s = SECTIONS.find(x => x.name === name);
-  if (s) return s.key;
-  return name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'other';
+export const SECTIONS = DEFAULT_SECTIONS;
+const slug = name => String(name).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'other';
+// key: the stable id of an area (its archive folder); name: the "## Name" heading in the files
+export const sectionKey = (name, list = DEFAULT_SECTIONS) => {
+  const s = list.find(x => x.name === name);
+  return s ? s.key : slug(name);
 };
 
 export function newId() {
@@ -37,8 +40,8 @@ export const orderOp = (path, section, ids) => ({ type: 'order', path, section, 
 export const moveOp = (from, to, section, card, extraMeta, index) =>
   ({ type: 'move', from, to, section, card: { ...clone(card), meta: { ...card.meta, ...extraMeta } }, index });
 export const rememberOp = (section, card, date) => moveOp(CURRENT, weekFile(date), section, card, { moved: date });
-export const archiveOp = (fromPath, section, card, date) =>
-  moveOp(fromPath, archiveFile(sectionKey(section), date), section, card, { archived: date });
+export const archiveOp = (fromPath, section, card, date, key = sectionKey(section)) =>
+  moveOp(fromPath, archiveFile(key, date), section, card, { archived: date });
 export const stateOp = (key, value) => ({ type: 'state', key, value });
 /** Moves a card to another section of the same file (at index; default: the end) */
 export const sectionOp = (path, id, section, index) => ({ type: 'section', path, id, section, index });
@@ -47,12 +50,139 @@ export const sectionOp = (path, id, section, index) => ({ type: 'section', path,
 export const PREPARED = 'prepared.md';
 // Cards per section to keep in Today; stored in state.json as "targets", edited in Settings
 export const DEFAULT_TARGETS = { Armenian: 2, English: 2, General: 1 };
+// Only the active areas count; a saved value wins, an area without one has its default (0 for a new area)
 export function targetsOf(state) {
-  const t = { ...DEFAULT_TARGETS };
-  const saved = state && state.targets;
-  if (saved && typeof saved === 'object')
-    for (const [k, v] of Object.entries(saved)) if (Number.isInteger(v) && v >= 0) t[k] = v;
+  const saved = state && state.targets && typeof state.targets === 'object' ? state.targets : {};
+  const t = {};
+  for (const { name } of activeSections(state)) {
+    const v = saved[name];
+    t[name] = Number.isInteger(v) && v >= 0 ? v : DEFAULT_TARGETS[name] ?? 0;
+  }
   return t;
+}
+
+/* ---- Areas (sections): state.json "sections" = [{ key, name, removed? }] ---- */
+// A removed area keeps its entry (removed = date): its archive keeps the name, and it can come back.
+// The key never changes (it names the archive folder); a rename changes the "## Name" headings.
+export function sectionsList(state) {
+  const saved = state && state.sections;
+  if (!Array.isArray(saved)) return DEFAULT_SECTIONS.map(s => ({ ...s }));
+  const out = [];
+  for (const s of saved) {
+    if (!s || typeof s !== 'object' || typeof s.key !== 'string' || !s.key || typeof s.name !== 'string' || !s.name.trim()) continue;
+    if (out.some(x => x.key === s.key || x.name === s.name)) continue;
+    out.push({ ...s });
+  }
+  if (out.some(s => !s.removed)) return out;
+  // Broken or empty list: the default areas come back, nothing is hidden
+  return DEFAULT_SECTIONS.map(s => ({ ...s })).concat(out.filter(s => !DEFAULT_SECTIONS.some(d => d.key === s.key || d.name === s.name)));
+}
+export const activeSections = state => sectionsList(state).filter(s => !s.removed);
+export const cleanName = name => String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+const savedOr = (state, k) => (state && state[k] !== undefined ? state[k] : null);
+
+/** Renames the heading "## from" to "## to" in the given files (merges into "to" if it is there already) */
+export const renameOp = (paths, from, to) => ({ type: 'rename', paths: [...paths], from, to });
+
+/*
+ * The area plans return { ops, undo, message } or { error }. paths: the files that hold cards of the
+ * areas (Today, Prepared, the weekday files); docs: those files' docs. Archive files are not touched:
+ * the archive is found by the key, so its old headings stay as history.
+ */
+export function addSectionPlan(state, rawName, extraKeys = []) {
+  const name = cleanName(rawName), list = sectionsList(state);
+  if (!name) return { error: 'Type a name first.' };
+  const same = list.find(s => sameName(s.name, name));
+  if (same && !same.removed) return { error: 'There is already an area called ' + same.name + '.' };
+  const undo = [stateOp('sections', savedOr(state, 'sections'))];
+  if (same) {   // a removed area comes back, with its archive
+    const next = list.map(s => { if (s !== same) return s; const c = { ...s }; delete c.removed; return c; });
+    return { ops: [stateOp('sections', next)], undo, message: 'Area ' + same.name + ' is back.' };
+  }
+  const used = new Set(list.map(s => s.key).concat(extraKeys));
+  let key = slug(name), n = 2;
+  while (used.has(key)) key = slug(name) + '-' + n++;
+  const targets = state && state.targets && typeof state.targets === 'object' ? state.targets : {};
+  return {
+    ops: [stateOp('sections', list.concat({ key, name })), stateOp('targets', { ...targets, [name]: 1 })],
+    undo: undo.concat(stateOp('targets', savedOr(state, 'targets'))),
+    message: 'Area ' + name + ' added.'
+  };
+}
+
+export function renameSectionPlan(state, key, rawName, paths, docs) {
+  const name = cleanName(rawName), list = sectionsList(state);
+  const area = list.find(s => s.key === key);
+  if (!area) return { error: 'No such area.' };
+  if (!name) return { error: 'Type a name first.' };
+  if (name === area.name) return { error: null };
+  const clash = list.find(s => s !== area && sameName(s.name, name));
+  if (clash) return { error: 'There is already ' + (clash.removed ? 'a removed area' : 'an area') + ' called ' + clash.name + '.' };
+  if (docs.some(d => d.sections.some(s => s.name === name && s.cards.length)))
+    return { error: 'Some cards are already under the heading ' + name + '. Move them first or pick another name.' };
+  const ops = [renameOp(paths, area.name, name), stateOp('sections', list.map(s => s === area ? { ...s, name } : s))];
+  const undo = [renameOp(paths, name, area.name), stateOp('sections', savedOr(state, 'sections'))];
+  // the target goes with the area (also a default one: a default belongs to the old name only)
+  const targets = state && state.targets && typeof state.targets === 'object' ? state.targets : {};
+  const moved = { ...targets, [name]: targetsOf(state)[area.name] ?? 0 };
+  delete moved[area.name];
+  ops.push(stateOp('targets', moved));
+  undo.push(stateOp('targets', savedOr(state, 'targets')));
+  return { ops, undo, message: area.name + ' renamed to ' + name + '.' };
+}
+
+/** Removes an area from the lists, only when Today, Prepared and the weekday files hold none of its cards */
+export function removeSectionPlan(state, key, docs, date) {
+  const list = sectionsList(state);
+  const area = list.find(s => s.key === key && !s.removed);
+  if (!area) return { error: 'No such area.' };
+  if (list.filter(s => !s.removed).length < 2) return { error: 'At least one area must stay.' };
+  const n = docs.reduce((k, d) => k + (d.sections.find(s => s.name === area.name) || { cards: [] }).cards.length, 0);
+  if (n) return { error: area.name + ' still has ' + n + (n === 1 ? ' card' : ' cards') + ' in Today, Prepared or the weekly check. Move them to another area (⋯ → Move to…) or delete them first.' };
+  return {
+    ops: [stateOp('sections', list.map(s => s === area ? { ...s, removed: date } : s))],
+    undo: [stateOp('sections', savedOr(state, 'sections'))],
+    message: 'Area ' + area.name + ' removed. Its archive stays.'
+  };
+}
+
+/** Moves an area one place up (dir -1) or down (dir 1) */
+export function moveSectionPlan(state, key, dir) {
+  const list = sectionsList(state);
+  const active = list.filter(s => !s.removed);
+  const i = active.findIndex(s => s.key === key), j = i + dir;
+  if (i < 0 || j < 0 || j >= active.length) return { error: null };
+  [active[i], active[j]] = [active[j], active[i]];
+  return { ops: [stateOp('sections', active.concat(list.filter(s => s.removed)))], undo: [stateOp('sections', savedOr(state, 'sections'))] };
+}
+
+/* ---- Split and merge ---- */
+export const JOIN = '\n\n';
+/**
+ * Splits a card at pos of text (the editor's text): the part before stays in the card, the part after
+ * becomes a new card right below with the same meta (so it is due in the same weekly check). null if a
+ * part would be empty.
+ */
+export function splitPlan(path, section, card, index, text, pos) {
+  // spaces at the cut go too (a split between two words leaves no space at the edges)
+  const a = normalizeBody(text.slice(0, pos).replace(/[ \t]+$/, '')), b = normalizeBody(text.slice(pos).replace(/^[ \t]+/, ''));
+  if (!a || !b) return null;
+  const fresh = { id: newId(), meta: { ...card.meta }, body: b };
+  return {
+    // the new card first: an interrupted split leaves the text twice, never lost
+    ops: [{ type: 'add', path, section, card: fresh, index: index + 1 }, editOp(path, section, card, a)],
+    undo: [editOp(path, section, card, card.body), deleteOp(path, fresh.id)],
+    card: fresh
+  };
+}
+/** Joins a card with the one below: the upper card gets both texts, the lower one is deleted */
+export function mergePlan(path, section, upper, lower, lowerIndex) {
+  return {
+    // edit first: an interrupted merge leaves the text twice, never lost
+    ops: [editOp(path, section, upper, normalizeBody(upper.body) + JOIN + normalizeBody(lower.body)), deleteOp(path, lower.id)],
+    undo: [restoreOp(path, section, lower, lowerIndex), editOp(path, section, upper, upper.body)]
+  };
 }
 const cardsIn = (doc, section) => (doc.sections.find(s => s.name === section) || { cards: [] }).cards;
 
@@ -98,7 +228,7 @@ export function preparedShortage(prepared, targets) {
 
 /** Files an op writes, in write order */
 export const opTargets = op =>
-  op.type === 'move' ? [op.to, op.from] : op.type === 'state' ? [STATE] : [op.path];
+  op.type === 'move' ? [op.to, op.from] : op.type === 'state' ? [STATE] : op.type === 'rename' ? [...(op.paths || [])] : [op.path];
 
 /* ---- applying ---- */
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -161,6 +291,17 @@ export function applyOp(op, path, doc) {
         const s = ensureSection(d, op.section);
         if (op.index == null || op.index > s.cards.length) s.cards.push(f.card);
         else s.cards.splice(Math.max(0, op.index), 0, f.card);
+      }
+      break;
+    }
+    case 'rename': {
+      const from = d.sections.find(x => x.name === op.from);
+      if (!from || op.from === op.to) return doc;
+      const to = d.sections.find(x => x.name === op.to);
+      if (!to) from.name = op.to;
+      else {
+        for (const c of from.cards) if (!to.cards.some(x => x.id === c.id)) to.cards.push(c);
+        d.sections.splice(d.sections.indexOf(from), 1);
       }
       break;
     }

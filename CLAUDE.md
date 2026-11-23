@@ -17,7 +17,15 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
 - **Flow and the queue are not built yet.** They come later, with a data transfer from TickTick. A card marked "Forgot" is deleted; its text goes to the clipboard so the user can paste it back into TickTick. The app keeps no copy.
 
 ## Workflow of the user
-- **Today:** three sections (Armenian, English, General) with daily targets ("Cards per day": Armenian 2, English 2, General 1 by default). The targets are stored in `state.json` as `targets` and edited in Settings.
+- **Today:** one section per **area** with daily targets (Armenian 2, English 2, General 1 by default). The targets are stored in `state.json` as `targets` (by area name) and edited in Settings.
+- **Areas** (Settings → "Areas and cards per day"; state.json `sections` = [{key, name, removed?}], absent = the three defaults, `sectionsList` / `activeSections` in ops.js). The order there is the order everywhere.
+  - The **key** never changes; it names the archive folder (`archive/<key>/`), so `archiveOp` gets the key from the list.
+  - **Rename** (`renameSectionPlan`): a `rename` op rewrites the `## Name` headings in Today, Prepared and the 7 weekday files (merging into the new heading if it already exists; a missing file is not created), and the target moves to the new name. Archive files keep their old headings (history); the archive view groups by key. A name already used by another area (removed too) or by a heading that holds cards is refused.
+  - **Remove** (`removeSectionPlan`): only when Today, Prepared and the weekday files hold none of its cards; the entry stays with `removed` = date, its archive stays, and adding an area with the same name (or "Bring back") restores it with the same key. At least one area stays.
+  - **Add** (`addSectionPlan`): a new key from the name (not one an archive folder already uses), target 1. ↑ ↓ reorder (`moveSectionPlan`).
+  - A heading in a file that isn't an active area but holds cards is still shown (`sectionsOf` in app.js), so nothing is hidden.
+- **Split** ("✂ Split here" in the editor of a saved card, not the Recall boxes; `splitPlan`): the text before the cursor stays, the rest becomes a new card right below with the same meta (due in the same weekly check). The new card is added first, then the old one is edited, so an interrupted split can't lose text.
+- **Merge** ("Merge with next" in the ⋯ menu of Today, Prepared and Weekly check, where it takes the next due card; `mergePlan`): the lower card's text goes to the end of the upper one after a blank line, then the lower card is deleted (edit first). Both have Undo.
 - **Tabs, in order:** Today, Weekly check, Prepared, Archive.
 - **Recall on Today** (the user's routine: type the day's words from memory, then have an AI check the spelling; morning and midday; the user fills Prepared and then comes back to type Today's cards):
   - Today's list (`k` = `today`, the only Recall list; Weekly check had one in v8–v18, the user didn't want it) starts **hidden**: a Recall section with typing boxes and per-section counts. **Enter** (Return on the phone; Ctrl+Enter too; or "+ Next card") starts the next box, **Shift+Enter** adds a line inside a box. Phone keyboards, custom ones too, may send Return only as `beforeinput` (`insertLineBreak` / `insertParagraph` / `insertText` "
@@ -59,7 +67,7 @@ current.md                     cards being learned now (Today)
 prepared.md                    next cards, top first (Prepared)
 week/1-mon.md … week/7-sun.md  remembered on that weekday; due when meta.moved < today (or no moved)
 archive/<section-key>/YYYY-MM.md  passed the check; one file per section per month (key: armenian/english/general)
-state.json                     { "targets": { "Armenian": 2, ... }, "aiPrompt": "…" | null, "aiShortcut": "Ctrl+Shift+Digit1", "timer": { "cycles": 21, "shortcut": "Alt+KeyB" } }   (old "weekCheckDone" is ignored and kept)
+state.json                     { "sections": [{ "key": "armenian", "name": "Armenian" }, …, { "key": "x", "name": "X", "removed": "2026-11-23" }], "targets": { "Armenian": 2, ... }, "aiPrompt": "…" | null, "aiShortcut": "Ctrl+Shift+Digit1", "timer": { "cycles": 21, "shortcut": "Alt+KeyB" } }   (old "weekCheckDone" is ignored and kept)
 ```
 Later releases add `flow/` and `queue/` next to these.
 
@@ -104,7 +112,8 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - `isDue`.
   - `archiveFile(key, date)`.
 - `ops.js` (pure): the op builders and `applyOp(op, path, doc)`, which is **idempotent**.
-  - **Op types:** `add`, `edit`, `delete`, `order`, `move`, `section` (to another section of the same file), `state`.
+  - **Op types:** `add`, `edit`, `delete`, `order`, `move`, `section` (to another section of the same file), `rename` (a heading in several files, `paths`), `state`.
+  - **Plans** (pure, tested in `test/areas.test.js`): `rememberPlan`, `splitPlan`, `mergePlan`, and the area plans, which return `{ops, undo, message}` or `{error}`.
   - **Moves:** `opTargets(op)` gives the files to write in order. A move writes **the target first, then the source**, so an interrupted move can duplicate a card but never lose it.
   - **Edit of a missing card:** an `edit` whose card is no longer in its file (moved or deleted elsewhere) re-adds the card, so the edited text is kept.
   - **Unknown op types** leave files untouched.
