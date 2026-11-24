@@ -137,6 +137,8 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
     3. On a conflict, re-download and replay; ops are idempotent.
     4. Skip the upload if nothing changed, which happens when replaying after a lost reply.
   - An op is removed from the queue only after all its files are saved.
+  - **Batching** (v30): a run of consecutive ops that all touch only the same one file (a split into hundreds of cards, many edits) is applied together and uploaded **once**; an op with several files (a move) ends the run, so the order between files is kept. Before v30 every op was its own upload, and a big split kept the app "Syncing…" for minutes.
+  - `dropbox.js` waits and retries a 429 (too many requests) up to 3 times, as `Retry-After` asks (at most 15 s).
   - **`sync(core)`:** flush → list the folder → download the core files and already-loaded files whose rev changed → flush.
   - **Archive files** download lazily (`load`).
   - **Conflicts are merged by replaying ops.** There are no "(my version)" copies as in Stanzas.

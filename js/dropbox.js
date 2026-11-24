@@ -69,6 +69,12 @@ export function createDropbox(store) {
       const a = store.get('wd.auth'); if (a) { a.exp = 0; store.set('wd.auth', a); }
       r = await call(await token());
     }
+    // Too many requests (many writes in a row): wait as Dropbox asks (at most 15 s), up to 3 times
+    for (let i = 0; r.status === 429 && i < 3; i++) {
+      const s = Math.min(15, Math.max(1, parseFloat(r.headers.get('Retry-After')) || 2 ** i));
+      await new Promise(res => setTimeout(res, s * 1000));
+      r = await call(await token());
+    }
     if (!r.ok) throw await apiErr(r);
     return r;
   }

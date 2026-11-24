@@ -1,7 +1,8 @@
 // Sync engine: a local copy of the Dropbox files plus a queue of pending ops.
 // What the UI shows = the last known Dropbox text of a file + the pending ops applied to it.
-// flush() writes ops one by one: for each file the op touches it applies the op to the latest known
-// text and uploads with that text's rev. A conflict (the file changed elsewhere) downloads the
+// flush() writes ops in order: for each file an op touches it applies the op to the latest known
+// text and uploads with that text's rev. A run of ops that all touch one and the same file (say, a card
+// split into 300) is applied together and uploaded once. A conflict (the file changed elsewhere) downloads the
 // newer text and replays the op on it — ops are idempotent, so nothing is lost or doubled.
 // An op leaves the queue only after every file it touches is saved in Dropbox.
 //
@@ -79,21 +80,22 @@ export function createEngine({ api, storage, key = 'wd.data' }) {
     return changed;
   }
 
-  async function writeOp(op, path) {
+  // ops: applied in order to path's latest text, then one upload
+  async function writeOps(ops, path) {
     for (let attempt = 0; ; attempt++) {
       await load(path);
       const f = fileOf(path);
       let before, next;
       if (isState(path)) {
         const s = parseState(f.text);
-        before = serializeState(s); next = serializeState(applyStateOp(op, s));
+        before = serializeState(s); next = serializeState(ops.reduce((x, op) => applyStateOp(op, x), s));
       } else {
         const d = parseDoc(f.text);
-        before = serializeDoc(d); next = serializeDoc(applyOp(op, path, d));
+        before = serializeDoc(d); next = serializeDoc(ops.reduce((x, op) => applyOp(op, path, x), d));
       }
       if (next === before) return;   // already applied (a replay) — nothing to write
       try {
-        // A queue file left without cards is deleted — only the version this op was applied to
+        // A queue file left without cards is deleted — only the version these ops were applied to
         // (another device's new card makes it a conflict: re-download, replay, keep the file)
         if (isQueueFile(path) && !allCards(parseDoc(next)).length) {
           if (f.rev) await api.remove(path, f.rev);
@@ -114,9 +116,19 @@ export function createEngine({ api, storage, key = 'wd.data' }) {
 
   async function flushNow() {
     while (data.ops.length) {
-      const op = data.ops[0];
-      for (const path of opTargets(op)) await writeOp(op, path);
-      data.ops.shift();
+      const targets = opTargets(data.ops[0]);
+      let n = 1;
+      // the ops right after it that touch only the same single file go in the same upload
+      if (targets.length === 1) {
+        while (n < data.ops.length) {
+          const t = opTargets(data.ops[n]);
+          if (t.length !== 1 || t[0] !== targets[0]) break;
+          n++;
+        }
+      }
+      const ops = data.ops.slice(0, n);
+      for (const path of targets) await writeOps(ops, path);
+      data.ops.splice(0, n);
       save();
     }
   }

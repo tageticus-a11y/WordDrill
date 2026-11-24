@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEngine } from '../js/sync.js';
 import { parseDoc, allCards, parseState } from '../js/format.js';
-import { addOp, editOp, deleteOp, rememberOp, archiveOp, stateOp, CURRENT, PREPARED, renameSectionPlan, queueToPreparedPlan, forgotPlan } from '../js/ops.js';
+import { addOp, editOp, deleteOp, rememberOp, archiveOp, stateOp, CURRENT, PREPARED, renameSectionPlan, queueToPreparedPlan, forgotPlan, splitAllPlan, moveOp } from '../js/ops.js';
 import { WEEK_FILES } from '../js/dates.js';
 
 const CORE = [CURRENT, 'state.json', ...WEEK_FILES];
@@ -324,4 +324,36 @@ test('Forgot: the card goes to the queue at the soon place, written before it le
   assert.deepEqual(ids(db.text(WEEK)), []);
   const moved = allCards(parseDoc(db.text(Q1)))[1];
   assert.deepEqual(moved.meta, { added: '2026-10-01', forgot: DAY });
+});
+
+test('a run of ops on one file is uploaded once; a move in between keeps the order; a failure keeps every op', async () => {
+  const db = fakeDropbox(), eng = createEngine({ api: db.api, storage: memStorage() });
+  const Q = 'queue/english/0001.md';
+  db.put(Q, '<!-- worddrill v1 -->\n\n<!-- card id=big added=2026-11-24 -->\n' + Array.from({ length: 300 }, (_, i) => 'word ' + i).join('\n') + '\n');
+  await eng.sync(CORE.concat(Q));
+  const uploads = [];
+  const up = db.api.upload;
+  db.api.upload = (p, t, r) => { uploads.push(p); return up(p, t, r); };
+  const big = allCards(eng.doc(Q))[0];
+  const p = splitAllPlan(Q, '', big, 0, big.body.split('\n'));
+  for (const op of p.ops) eng.add(op);
+  // the network fails on the first try: nothing is lost, everything is still pending
+  db.fail.push({ on: 'upload', kind: 'network', path: Q });
+  await assert.rejects(eng.flush());
+  assert.equal(eng.pending(), 300);
+  await eng.flush();
+  assert.equal(eng.pending(), 0);
+  assert.deepEqual(uploads, [Q, Q]);   // the failed try and one real upload
+  assert.deepEqual(cards(db.text(Q)).map(c => c.body), Array.from({ length: 300 }, (_, i) => 'word ' + i));
+  // a move between two runs: queue, then Preparation + queue, then queue again — in that order
+  uploads.length = 0;
+  const [c0, c1] = allCards(eng.doc(Q));
+  eng.add(editOp(Q, '', c0, 'word 0 edited'));
+  eng.add(moveOp(Q, PREPARED, 'English', c1));
+  eng.add(editOp(Q, '', allCards(eng.doc(Q))[1], 'word 2 edited'));
+  eng.add(deleteOp(Q, allCards(eng.doc(Q))[2].id));
+  await eng.flush();
+  assert.deepEqual(uploads, [Q, PREPARED, Q, Q]);
+  assert.deepEqual(cards(db.text(Q)).slice(0, 3).map(c => c.body), ['word 0 edited', 'word 2 edited', 'word 4']);
+  assert.deepEqual(cards(db.text(PREPARED)).map(c => c.body), ['word 1']);
 });
