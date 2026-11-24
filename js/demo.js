@@ -20,6 +20,13 @@ export function createDemoDropbox(store) {
         all[path] = { text, rev: 'd' + ++n };
         save(all);
         return { rev: all[path].rev };
+      },
+      async remove(path, rev) {
+        const all = files(), cur = all[path];
+        if (!cur) return;
+        if (cur.rev !== rev) throw conflict();
+        delete all[path];
+        save(all);
       }
     }
   };

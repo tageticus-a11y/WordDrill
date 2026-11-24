@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEngine } from '../js/sync.js';
 import { parseDoc, allCards, parseState } from '../js/format.js';
-import { addOp, editOp, deleteOp, rememberOp, archiveOp, stateOp, CURRENT, renameSectionPlan } from '../js/ops.js';
+import { addOp, editOp, deleteOp, rememberOp, archiveOp, stateOp, CURRENT, PREPARED, renameSectionPlan, queueToPreparedPlan, forgotPlan } from '../js/ops.js';
 import { WEEK_FILES } from '../js/dates.js';
 
 const CORE = [CURRENT, 'state.json', ...WEEK_FILES];
@@ -35,6 +35,17 @@ function fakeDropbox() {
       files.set(path, { text, rev: 'r' + ++revN });
       if (f && f.kind === 'after-write') throw new TypeError('Failed to fetch');   // saved, but the reply was lost
       return { rev: 'r' + revN };
+    },
+    removed: [],
+    async remove(path, rev) {
+      api.calls++;
+      const f = take('remove', path);
+      if (f && f.kind === 'network') throw new TypeError('Failed to fetch');
+      const cur = files.get(path);
+      if (!cur) return;
+      if (cur.rev !== rev) throw conflict();
+      files.delete(path); api.removed.push(path);
+      if (f && f.kind === 'after-write') throw new TypeError('Failed to fetch');
     }
   };
   return { api, files, fail, put: (p, text) => files.set(p, { text, rev: 'r' + ++revN }), text: p => files.get(p)?.text };
@@ -235,4 +246,82 @@ test('renaming an area rewrites the headings of existing files, creates no missi
   assert.equal(db.files.has('prepared.md'), false);
   assert.equal(db.files.has('week/1-mon.md'), false);
   assert.equal(parseState(db.text('state.json')).sections[0].name, 'Հայերեն');
+});
+
+/* ---- the queue: a file left without cards is deleted ---- */
+const Q1 = 'queue/english/0001.md', Q2 = 'queue/english/0002.md';
+const qText = (...ids) => '<!-- worddrill v1 -->\n\n' + ids.map(id => '<!-- card id=' + id + ' -->\nnote ' + id + '\n').join('\n');
+
+test('a queue file emptied by a move is deleted (at the rev it had); the card is in Preparation', async () => {
+  const db = fakeDropbox();
+  db.put(Q1, qText('a'));
+  db.put(Q2, qText('b'));
+  const eng = createEngine({ api: db.api, storage: memStorage() });
+  await eng.sync([...CORE, PREPARED, Q1]);
+  const card = allCards(eng.doc(Q1))[0];
+  queueToPreparedPlan(Q1, 'English', card, 0).ops.forEach(op => eng.add(op));
+  await eng.flush();
+  assert.equal(db.files.has(Q1), false);
+  assert.deepEqual(db.api.removed, [Q1]);
+  assert.deepEqual(ids(db.text(PREPARED)), ['a']);
+  assert.deepEqual(eng.paths('queue/english/'), [Q2]);
+  assert.equal(totalCards(db), 2);
+});
+
+test('a queue file that got a card on another device meanwhile is kept, with that card', async () => {
+  const db = fakeDropbox();
+  db.put(Q1, qText('a'));
+  const eng = createEngine({ api: db.api, storage: memStorage() });
+  await eng.sync([...CORE, PREPARED, Q1]);
+  queueToPreparedPlan(Q1, 'English', allCards(eng.doc(Q1))[0], 0).ops.forEach(op => eng.add(op));
+  db.put(Q1, qText('a', 'other'));   // another device added a card to the same file
+  await eng.flush();
+  assert.equal(eng.pending(), 0);
+  assert.deepEqual(ids(db.text(Q1)), ['other']);
+  assert.deepEqual(ids(db.text(PREPARED)), ['a']);
+  assert.deepEqual(db.api.removed, []);
+});
+
+test('a lost reply after deleting a queue file: no error later, no file comes back', async () => {
+  const db = fakeDropbox();
+  db.put(Q1, qText('a'));
+  const eng = createEngine({ api: db.api, storage: memStorage() });
+  await eng.sync([...CORE, PREPARED, Q1]);
+  queueToPreparedPlan(Q1, 'English', allCards(eng.doc(Q1))[0], 0).ops.forEach(op => eng.add(op));
+  db.fail.push({ on: 'remove', kind: 'after-write', path: Q1 });
+  await assert.rejects(eng.flush());
+  await eng.sync([...CORE, PREPARED]);
+  assert.equal(eng.pending(), 0);
+  assert.equal(db.files.has(Q1), false);
+  assert.deepEqual(ids(db.text(PREPARED)), ['a']);
+  assert.deepEqual(eng.paths('queue/'), []);
+});
+
+test('other files emptied are still saved empty, not deleted', async () => {
+  const db = fakeDropbox();
+  db.put(PREPARED, '<!-- worddrill v1 -->\n\n## English\n\n<!-- card id=p -->\nprep\n');
+  const eng = createEngine({ api: db.api, storage: memStorage() });
+  await eng.sync([...CORE, PREPARED]);
+  eng.add(deleteOp(PREPARED, 'p'));
+  await eng.flush();
+  assert.equal(db.files.has(PREPARED), true);
+  assert.deepEqual(db.api.removed, []);
+});
+
+test('Forgot: the card goes to the queue at the soon place, written before it leaves the weekday file', async () => {
+  const db = fakeDropbox();
+  db.put(WEEK, '<!-- worddrill v1 -->\n\n## English\n\n<!-- card id=w added=2026-10-01 moved=2026-11-05 -->\nforgotten\n');
+  db.put(Q1, qText('a', 'b'));
+  const eng = createEngine({ api: db.api, storage: memStorage() });
+  await eng.sync([...CORE, Q1]);
+  const card = allCards(eng.doc(WEEK))[0];
+  forgotPlan(WEEK, 'English', card, 0, { path: Q1, index: 1 }, DAY).ops.forEach(op => eng.add(op));
+  db.fail.push({ on: 'upload', kind: 'network', path: WEEK });   // interrupted after the queue was written
+  await assert.rejects(eng.flush());
+  assert.deepEqual(ids(db.text(Q1)), ['a', 'w', 'b']);
+  assert.deepEqual(ids(db.text(WEEK)), ['w']);   // twice for a moment, never lost
+  await eng.flush();
+  assert.deepEqual(ids(db.text(WEEK)), []);
+  const moved = allCards(parseDoc(db.text(Q1)))[1];
+  assert.deepEqual(moved.meta, { added: '2026-10-01', forgot: DAY });
 });

@@ -7,10 +7,12 @@
 //
 // api: { list() → [{ path, rev }], download(path) → { text, rev } | null, upload(path, text, rev|null) → { rev } }
 //   upload with rev = null must fail with err.conflict if the file exists; with a rev — if it differs.
+//   remove(path, rev): deletes the file only at that rev (else err.conflict); a missing file is fine.
 // storage: { get(key), set(key, value) } (localStorage JSON wrapper in the app, a Map in tests)
 
-import { parseDoc, serializeDoc, parseState, serializeState } from './format.js';
+import { parseDoc, serializeDoc, parseState, serializeState, allCards } from './format.js';
 import { opTargets, applyOp, applyStateOp, STATE } from './ops.js';
+import { isQueueFile } from './queue.js';
 
 const MAX_CONFLICT_RETRIES = 5;
 
@@ -91,6 +93,14 @@ export function createEngine({ api, storage, key = 'wd.data' }) {
       }
       if (next === before) return;   // already applied (a replay) — nothing to write
       try {
+        // A queue file left without cards is deleted — only the version this op was applied to
+        // (another device's new card makes it a conflict: re-download, replay, keep the file)
+        if (isQueueFile(path) && !allCards(parseDoc(next)).length) {
+          if (f.rev) await api.remove(path, f.rev);
+          f.text = ''; f.rev = null; f.remoteRev = null;
+          save();
+          return;
+        }
         const r = await api.upload(path, next, f.rev);
         f.text = next; f.rev = f.remoteRev = r.rev;
         save();

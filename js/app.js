@@ -10,15 +10,16 @@ import {
   CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
   findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp,
   sectionsList, activeSections, sectionKey, addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan,
-  splitPlan, mergePlan
+  splitPlan, mergePlan, queueAddOp, queueToPreparedPlan, queueToEndPlan, forgotPlan
 } from './ops.js';
+import { queueSettings, queueFiles, isQueueFile, queueNumber, queuePath, appendTarget, soonTarget, QUEUE_SECTION } from './queue.js';
 import { createVersions } from './versions.js';
 import { mountTimer } from './timer-ui.js';
 import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, DEFAULT_SHORTCUT } from './timer.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '27';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '28';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -45,6 +46,8 @@ let tab = store.get('wd.tab') || 'today';
 let checkDay = null;                        // weekday number picked in Weekly check; null = today
 let archiveKey = null, archiveMonth = null, archiveQuery = '';
 let prepArea = store.get('wd.prepArea');      // Preparation: the area sub-tab shown
+let prepView = store.get('wd.prepView') === 'queue' ? 'queue' : 'prepared';   // Preparation: Prepared or Queue
+const queueAt = {};                          // area key → the queue file shown (front by default)
 let editing = store.get('wd.draft');        // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
@@ -219,7 +222,13 @@ function closeEditor() {
 function saveEdit() {
   const e = editing, text = normalizeBody(e.text);
   if (!text) { toast(e.id ? 'The card is empty. To remove it, use Delete.' : 'Type something first.'); return; }
-  if (!e.id) { closeEditor(); commit(addOp(e.path, e.section, text, today())); return; }
+  if (!e.id) {
+    closeEditor();
+    if (isQueueFile(e.path)) {
+      commit(queueAddOp({ path: e.path, index: e.index }, text, today()), 'Added to the queue: file ' + queueNumber(e.path) + ', card ' + ((e.index || 0) + 1) + '.');
+    } else commit(addOp(e.path, e.section, text, today()));
+    return;
+  }
   const f = findCard(engine.doc(e.path), e.id);
   const card = f ? f.card : { id: e.id, meta: {} };
   closeEditor();
@@ -369,14 +378,16 @@ function renderList(path) {
       h('p', { class: 'note hidden-list', text: 'Today’s cards are hidden: ' + (counts || 'none') + '.' }),
       reminder(date), preparedReminder()];
   }
-  const out = [isToday ? dateLine()
-    : h('p', { class: 'date', text: 'Next cards, top first. ✓ (Remembered) in Today brings the top card of the same area into Today.' })];
-  if (isToday) out.push(recallBar('today'));
+  const out = isToday ? [dateLine(), recallBar('today')] : [];
   let secs = sectionsOf(doc);
   if (!isToday) {
     // Preparation: one sub-tab per area with its count; red when it holds less than a day's target
-    const names = secs.map(s => s.name);
-    if (editing && editing.path === path && names.includes(editing.section)) prepArea = editing.section;
+    const names = secs.map(s => s.name), areas = sectionsList(engine.state());
+    if (editing && editing.path === path && names.includes(editing.section)) { prepArea = editing.section; prepView = 'prepared'; }
+    if (editing && isQueueFile(editing.path)) {   // a queue card (or a new one) is being edited: show it
+      const area = areas.find(a => a.key === editing.path.split('/')[1]);
+      if (area && names.includes(area.name)) { prepArea = area.name; prepView = 'queue'; queueAt[area.key] = editing.path; }
+    }
     if (!names.includes(prepArea)) prepArea = names[0];
     out.push(h('div', { class: 'subtabs', role: 'tablist' }, secs.map(sec => {
       const target = targets[sec.name] || 0, low = target > 0 && sec.cards.length < target, on = sec.name === prepArea;
@@ -386,6 +397,15 @@ function renderList(path) {
         sec.name || 'No area', h('span', { class: 'n', text: String(sec.cards.length) }));
     })));
     secs = secs.filter(s => s.name === prepArea);
+    // Prepared (the next cards, in order) or Queue (raw notes waiting to be prepared); only real areas have a queue
+    const area = activeSections(engine.state()).find(a => a.name === prepArea);
+    const view = area ? prepView : 'prepared';
+    if (area) out.push(h('div', { class: 'seg', role: 'tablist' },
+      [['prepared', 'Prepared ' + (secs[0] ? secs[0].cards.length : 0)], ['queue', 'Queue']].map(([v, label]) =>
+        h('button', { type: 'button', role: 'tab', 'aria-selected': String(v === view), class: v === view ? 'on' : null,
+          onclick: () => { prepView = v; store.set('wd.prepView', v); menuFor = null; render(); } }, label))));
+    if (view === 'queue') return out.concat(renderQueue(area));
+    out.push(h('p', { class: 'date', text: 'Next cards, top first. ✓ (Remembered) in Today brings the top card of the same area into Today.' }));
   }
   for (const sec of secs) {
     const ids = sec.cards.map(c => c.id);
@@ -570,6 +590,104 @@ function preparedReminder() {
     h('span', { text: 'Preparation is running low: ' + short.map(x => x.section + ' ' + x.have + ' of ' + x.need).join(', ') + '.' }),
     btn('Open Preparation', () => { prepArea = short[0].section; setTab('prepared'); }, 'primary'));
 }
+/* ============ Queue ============ */
+// Raw notes waiting to be prepared, per area: queue/<key>/0001.md … (js/queue.js). Front first. The files
+// are loaded when shown or needed; a file left without cards is deleted by the sync engine.
+const queuePaths = key => queueFiles(engine.paths('queue/' + key + '/'), key);
+const queueCount = p => allCards(engine.doc(p)).length;
+const queueLoading = new Set(), queueFailed = new Set();
+function loadQueueFile(p) {
+  if (queueLoading.has(p) || queueFailed.has(p)) return;
+  queueLoading.add(p);
+  engine.load(p).then(() => { queueLoading.delete(p); backgroundRender(); },
+    e => { queueLoading.delete(p); queueFailed.add(p); handleErr(e); render(); });
+}
+/** Where a new card goes: soon (after the first soonAfter cards) or the end; loads the files it needs */
+async function queueTarget(key, soon) {
+  const paths = queuePaths(key), set = queueSettings(engine.state()), files = [];
+  try {
+    if (soon) {
+      let seen = 0;
+      for (const p of paths) {
+        await engine.load(p);
+        files.push({ path: p, count: queueCount(p) });
+        if ((seen += files[files.length - 1].count) >= set.soonAfter) break;
+      }
+      return soonTarget(files, key, set);
+    }
+    if (paths.length) { const p = paths[paths.length - 1]; await engine.load(p); files.push({ path: p, count: queueCount(p) }); }
+    return appendTarget(files, key, set);
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw e;
+    // Offline with the files not on this device: soon → into the front file (about the right place), end → the last file
+    return soon ? { path: paths[0] || queuePath(key, 1), index: set.soonAfter } : { path: paths[paths.length - 1] || queuePath(key, 1), index: 1e9 };
+  }
+}
+function renderQueue(area) {
+  // a file just emptied is deleted on the next flush: not shown meanwhile
+  const key = area.key, paths = queuePaths(key).filter(p => !engine.isLoaded(p) || queueCount(p) > 0), set = queueSettings(engine.state());
+  const adding = editing && !editing.id && isQueueFile(editing.path) && editing.path.split('/')[1] === key;
+  const addBtn = soon => btn(soon ? '+ Add soon' : '+ Add to the end', () => {
+    autoSave();
+    queueTarget(key, soon).then(t => startEdit(t.path, QUEUE_SECTION, null, t.index), handleErr);
+  }, 'add', soon ? 'After the first ' + set.soonAfter + ' cards of the queue' : 'At the end of the queue');
+  const out = [h('p', { class: 'date', text: 'Notes waiting to become cards, front first. ↑ Prepared puts one at the end of Prepared.' })];
+  if (adding) out.push(h('p', { class: 'note', text: 'New card: file ' + queueNumber(editing.path) + (editing.index < 1e9 ? ', card ' + (editing.index + 1) : ', at the end') + '.' }), renderEditor());
+  else out.push(h('div', { class: 'row queue-add' }, addBtn(true), addBtn(false)));
+  if (!paths.length) { out.push(h('p', { class: 'empty', text: 'The ' + area.name + ' queue is empty.' })); return out; }
+  let p = queueAt[key];
+  if (!paths.includes(p)) p = queueAt[key] = paths[0];
+  const at = paths.indexOf(p), loaded = engine.isLoaded(p);
+  const go = d => { queueAt[key] = paths[at + d]; menuFor = null; render(); };
+  const doc = engine.doc(p);
+  const items = doc.sections.flatMap(sec => sec.cards.map((card, i) => ({ card, sec, i })));
+  out.push(h('div', { class: 'bar queue-bar' },
+    h('button', { type: 'button', class: 'icon', title: 'Previous file', 'aria-label': 'Previous file', disabled: at === 0, onclick: () => go(-1) }, '‹'),
+    h('span', { class: 'note', text: 'File ' + (at + 1) + ' of ' + paths.length + (loaded ? ' · ' + plural(items.length, 'card') : '') }),
+    h('button', { type: 'button', class: 'icon', title: 'Next file', 'aria-label': 'Next file', disabled: at === paths.length - 1, onclick: () => go(1) }, '›')));
+  if (!loaded) {
+    if (queueFailed.has(p)) out.push(h('p', { class: 'empty' }, 'Couldn’t load this file. ', btn('Try again', () => { queueFailed.delete(p); render(); }, 'link')));
+    else { out.push(h('p', { class: 'empty', text: 'Loading…' })); loadQueueFile(p); }
+    return out;
+  }
+  out.push(h('section', { class: 'sec queue' }, items.map(({ card, sec, i }) => {
+    const ids = sec.cards.map(c => c.id), more = menuFor === card.id;
+    const swap = j => { const n = ids.slice(); [n[i], n[j]] = [n[j], n[i]]; commit(orderOp(p, sec.name, n)); };
+    const run = plan => commit(plan.ops, plan.message, plan.undo);
+    const actions = [
+      btn('↑ Prepared', ev => leave(ev, () => run(queueToPreparedPlan(p, area.name, card, i))), 'primary', 'To the end of Prepared ' + area.name),
+      btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')];
+    if (more) actions.push(h('span', { class: 'more' },
+      h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swap(i - 1) }, '↑'),
+      h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
+      mergeButton(p, sec.name, card, sec.cards[i + 1], i + 1),
+      btn('To the end of the queue', ev => leave(ev, () => {
+        menuFor = null;
+        return queueTarget(key, false).then(t => run(queueToEndPlan(engine.doc(p), p, card, i, t)), e => { handleErr(e); render(); });
+      })),
+      btn('Delete', ev => leave(ev, () => { menuFor = null; commit(deleteOp(p, card.id), 'Card deleted.', restoreOp(p, sec.name, card, i)); }), 'danger')));
+    return cardView(card, { path: p, section: sec.name, actions });
+  })));
+  if (at < paths.length - 1 && items.length > 3) out.push(btn('Next file ›', () => { go(1); window.scrollTo(0, 0); }, 'add'));
+  return out;
+}
+// Settings → Queue: cards per file and the "soon" place (state.json "queue")
+function queueSettingsView() {
+  const q = queueSettings(engine.state());
+  const save = (k, raw) => {
+    const old = engine.state().queue, v = queueSettings({ queue: { ...q, [k]: parseInt(raw, 10) } })[k];
+    if (v === q[k]) { render(); return; }
+    commit(stateOp('queue', { ...(old && typeof old === 'object' ? old : {}), [k]: v }),
+      k === 'fileSize' ? 'Queue: ' + v + ' cards per file.' : 'Add soon: after ' + v + ' cards.', stateOp('queue', old ?? null));
+  };
+  const num = (k, label) => h('label', { class: 'setting' }, h('span', { text: label }),
+    h('input', { type: 'number', min: '5', max: '500', inputmode: 'numeric', value: String(q[k]), 'aria-label': label, onchange: ev => save(k, ev.target.value) }));
+  return h('section', { class: 'sec' }, h('h2', { text: 'Queue' }),
+    h('p', { class: 'note', text: 'Notes waiting to be prepared (Preparation → Queue), kept in files of up to this many cards. A new file starts at the end of the queue when the last one is full; an empty file is deleted.' }),
+    num('fileSize', 'Cards per file'),
+    num('soonAfter', 'Add soon after … cards'),
+    h('p', { class: 'note', text: 'Add soon and ✗ Forgot (in the weekly check) put a card after this many cards from the front of the queue, so it comes up again soon. Saved in Dropbox, so all your devices use these.' }));
+}
 function openPrepArea(name) {
   prepArea = name; store.set('wd.prepArea', name); menuFor = null;
   render();
@@ -646,10 +764,18 @@ function renderCheck() {
               commit(op, 'Archived.', moveOp(op.to, day.file, sec.name, card, {}, i));
             }), 'primary'),
             btn('✗ Forgot', ev => {
-              // Clipboard first, while still inside the tap (iOS allows it only there)
-              if (navigator.clipboard) navigator.clipboard.writeText(card.body).catch(() => {});
-              leave(ev, () => commit(deleteOp(day.file, card.id), 'Removed. The text is copied — paste it into TickTick.', restoreOp(day.file, sec.name, card, i)));
-            }),
+              // Back into its area's queue, after the first cards (soon); a heading that isn't an area: removed, text copied
+              const area = sectionsList(engine.state()).find(a => a.name === sec.name);
+              if (!area) {
+                if (navigator.clipboard) navigator.clipboard.writeText(card.body).catch(() => {});   // inside the tap (iOS)
+                leave(ev, () => commit(deleteOp(day.file, card.id), 'Removed. The text is copied.', restoreOp(day.file, sec.name, card, i)));
+                return;
+              }
+              leave(ev, () => queueTarget(area.key, true).then(t => {
+                const plan = forgotPlan(day.file, sec.name, card, i, t, date);
+                commit(plan.ops, plan.message, plan.undo);
+              }, e => { handleErr(e); render(); }));
+            }, null, 'Back into the queue, to come up again soon'),
             btn('⋯', () => { menuFor = menuFor === card.id ? null : card.id; render(); }, 'icon' + (menuFor === card.id ? ' on' : ''), 'More actions'),
             menuFor === card.id ? h('span', { class: 'more' }, sectionPicker(day.file, sec.name, card, i),
               (n => mergeButton(day.file, sec.name, card, n, sec.cards.indexOf(n)))(due[due.indexOf(card) + 1])) : null
@@ -720,6 +846,7 @@ function renderSettings() {
   const n = engine.pending();
   return [
     areasSettings(),
+    queueSettingsView(),
     timerSettingsView(),
     promptSettings(),
     h('section', { class: 'sec' }, h('h2', { text: 'Dropbox' }),
@@ -763,7 +890,7 @@ function areasSettings() {
       onclick: () => applyPlan(moveSectionPlan(engine.state(), area.key, 1)) }, '↓'),
     h('button', { type: 'button', class: 'icon danger', title: 'Remove ' + area.name, 'aria-label': 'Remove ' + area.name, disabled: active.length < 2,
       onclick: () => {
-        const p = removeSectionPlan(engine.state(), area.key, docs(), today());
+        const p = removeSectionPlan(engine.state(), area.key, docs(), today(), queuePaths(area.key).length);
         if (p.error || confirm('Remove the area ' + area.name + '? Its archive stays, and adding an area with the same name brings it back.')) applyPlan(p);
       } }, '✕')));
   const name = h('input', { type: 'text', class: 'area-name', maxlength: '60', placeholder: 'New area, e.g. Idioms', 'aria-label': 'New area name',

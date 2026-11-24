@@ -6,6 +6,7 @@
 import { weekFile, archiveFile } from './dates.js';
 import { normalizeBody } from './format.js';
 import { HR_RE } from './markdown.js';
+import { QUEUE_SECTION } from './queue.js';
 
 export const CURRENT = 'current.md';
 export const STATE = 'state.json';
@@ -38,6 +39,7 @@ export const deleteOp = (path, id) => ({ type: 'delete', path, id });
 export const restoreOp = (path, section, card, index) => ({ type: 'add', path, section, card: clone(card), index });
 export const orderOp = (path, section, ids) => ({ type: 'order', path, section, ids: [...ids] });
 // index: position in the target section (Undo puts a card back where it was); default: at the end
+// section: the section in the target file (the source loses the card wherever it is)
 export const moveOp = (from, to, section, card, extraMeta, index) =>
   ({ type: 'move', from, to, section, card: { ...clone(card), meta: { ...card.meta, ...extraMeta } }, index });
 export const rememberOp = (section, card, date) => moveOp(CURRENT, weekFile(date), section, card, { moved: date });
@@ -134,13 +136,14 @@ export function renameSectionPlan(state, key, rawName, paths, docs) {
 }
 
 /** Removes an area from the lists, only when Today, Prepared and the weekday files hold none of its cards */
-export function removeSectionPlan(state, key, docs, date) {
+export function removeSectionPlan(state, key, docs, date, queueFileCount = 0) {
   const list = sectionsList(state);
   const area = list.find(s => s.key === key && !s.removed);
   if (!area) return { error: 'No such area.' };
   if (list.filter(s => !s.removed).length < 2) return { error: 'At least one area must stay.' };
   const n = docs.reduce((k, d) => k + (d.sections.find(s => s.name === area.name) || { cards: [] }).cards.length, 0);
   if (n) return { error: area.name + ' still has ' + n + (n === 1 ? ' card' : ' cards') + ' in Today, Preparation or the weekly check. Move them to another area (⋯ → Move to…) or delete them first.' };
+  if (queueFileCount) return { error: area.name + ' still has cards in its queue. Move them to Preparation or delete them first.' };
   return {
     ops: [stateOp('sections', list.map(s => s === area ? { ...s, removed: date } : s))],
     undo: [stateOp('sections', savedOr(state, 'sections'))],
@@ -227,6 +230,37 @@ export function rememberPlan(current, prepared, section, card, date, target) {
   return { ops, undo, refill };
 }
 
+/* ---- The queue (queue/<key>/NNNN.md, see queue.js): targets are { path, index } ---- */
+/** A new card in the queue at target (soon or the end) */
+export const queueAddOp = (target, body, date) => ({ ...addOp(target.path, QUEUE_SECTION, body, date), index: target.index });
+/** Queue → bottom of the area in Preparation (the end of the line); Undo puts it back in its place */
+export function queueToPreparedPlan(qPath, area, card, index) {
+  return { ops: [moveOp(qPath, PREPARED, area, card)], undo: [moveOp(PREPARED, qPath, QUEUE_SECTION, card, {}, index)], message: 'Moved to Preparation.' };
+}
+/** Postpones a queue card to the end of the queue (target: appendTarget); doc: its file's doc */
+export function queueToEndPlan(doc, qPath, card, index, target) {
+  if (target.path === qPath) {
+    const ids = cardsIn(doc, QUEUE_SECTION).map(c => c.id);
+    return {
+      ops: [orderOp(qPath, QUEUE_SECTION, ids.filter(id => id !== card.id).concat(card.id))],
+      undo: [orderOp(qPath, QUEUE_SECTION, ids)], message: 'Moved to the end of the queue.'
+    };
+  }
+  return { ops: [moveOp(qPath, target.path, QUEUE_SECTION, card, {}, target.index)], undo: [moveOp(target.path, qPath, QUEUE_SECTION, card, {}, index)], message: 'Moved to the end of the queue.' };
+}
+/**
+ * Forgot in the weekly check: the card goes back into its area's queue at target (the "soon" place),
+ * without its moved date and with forgot=date. The queue file is written first, so it can't be lost.
+ */
+export function forgotPlan(weekPath, section, card, index, target, date) {
+  const meta = { ...card.meta, forgot: date };
+  delete meta.moved;
+  return {
+    ops: [moveOp(weekPath, target.path, QUEUE_SECTION, { ...card, meta }, {}, target.index)],
+    undo: [moveOp(target.path, weekPath, section, card, {}, index)],
+    message: 'Back in the queue: it comes up again soon.'
+  };
+}
 /** Sections whose Prepared list holds less than one day's portion: [{ section, have, need }] */
 export function preparedShortage(prepared, targets) {
   return Object.entries(targets)

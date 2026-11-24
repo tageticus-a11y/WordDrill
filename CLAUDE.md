@@ -14,7 +14,7 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
   - Add tests together with every change to the format, ops or sync code.
 - **All UI labels are in English.** Card content is Armenian, English and Russian, so everything must be Unicode-safe.
 - **Never commit real word lists.** Test data is made-up placeholder text.
-- **Flow and the queue are not built yet.** They come later, with a data transfer from TickTick. A card marked "Forgot" is deleted; its text goes to the clipboard so the user can paste it back into TickTick. The app keeps no copy.
+- **The queue** (v28) holds the user's raw TickTick notes (saved words, phrases, failed cards) until they are prepared; it replaced the TickTick "flow" notes. "Forgot" no longer copies to the clipboard: the card goes back into the queue (see Weekly check).
 
 ## Workflow of the user
 - **Today:** one section per **area** with daily targets (Armenian 2, English 2, General 1 by default). The targets are stored in `state.json` as `targets` (by area name) and edited in Settings.
@@ -46,7 +46,16 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
     - On phones only, body and header also keep a tint of the part's colour; a computer keeps its colours.
   - Hover texts show the current shortcuts (Start/Pause, the timer button, Copy for AI check, + Next card = Ctrl+Enter).
   - State in localStorage `wd.timer` = {total, startAt, elapsed} with wall-clock times: survives reloads and tab switches. Logic in `js/timer.js` (pure, tested), UI in `js/timer-ui.js`.
-- **Preparation** (`prepared.md`; "Prepared" below means this tab): the user prepares the next cards, not in order as with Today. It works like Today (add, edit, up/down, delete) but shows **one area at a time**: a row of sub-tabs (`.subtabs`, one per area of `sectionsOf`, i.e. Settings order plus extra headings holding cards), each with its card count. A sub-tab is red when the area holds fewer cards than its daily target (not enough for tomorrow), with a note above the list. The chosen sub-tab is kept in localStorage `wd.prepArea`; an open editor in Preparation picks its area; "Open Preparation" on the low banner opens the first short area. Next step (planned): bringing the user’s messy TickTick notes (saved words, phrases, forgotten cards) into these sub-tabs.
+- **Preparation** (`prepared.md`; "Prepared" below means this tab): the user prepares the next cards, not in order as with Today. It works like Today (add, edit, up/down, delete) but shows **one area at a time**: a row of sub-tabs (`.subtabs`, one per area of `sectionsOf`, i.e. Settings order plus extra headings holding cards), each with its card count. A sub-tab is red when the area holds fewer cards than its daily target (not enough for tomorrow), with a note above the list. The chosen sub-tab is kept in localStorage `wd.prepArea`; an open editor in Preparation picks its area; "Open Preparation" on the low banner opens the first short area.
+- **Queue** (Preparation → area sub-tab → the **Prepared N | Queue** switch, localStorage `wd.prepView`; logic in `js/queue.js`):
+  - **Files:** `queue/<area-key>/0001.md`, `0002.md` … (4 digits, by key, so a rename never touches them), file format v1 **without a heading** (all cards in section `''`, `QUEUE_SECTION`). The front of the queue is the lowest number.
+  - **Settings → Queue** (state.json `queue` = {fileSize, soonAfter}, `queueSettings`, both 50 by default, 5–500): cards per file and the "soon" place.
+  - **New files are made only at the end:** "+ Add to the end" (`appendTarget`) uses the last file while it holds fewer than `fileSize` cards, else `last number + 1` (`0001` for an empty queue). "+ Add soon" and Forgot (`soonTarget`) insert after the first `soonAfter` cards counted across files (a shorter queue: the end). A soon insert may push a file over `fileSize`; nothing ever cascades between files.
+  - **A queue file left without cards is deleted** by the sync engine (`api.remove(path, rev)`, Dropbox `files/delete_v2` with `parent_rev`): if another device changed the file meanwhile it is a conflict, so the file is re-downloaded, the op replayed and the file kept. A missing file counts as deleted. The pager hides a just-emptied file.
+  - **Loading:** queue files are not in `CORE`; the shown file is loaded on demand (`loadQueueFile`), and `queueTarget(key, soon)` loads the front files (soon) or the last one (end). Offline with unloaded files: soon → index `soonAfter` in the front file, end → the end of the last file.
+  - **View:** one file at a time, "File n of N · M cards" with ‹ ›. Cards are normal read-only cards (✎ Edit, ✂ Split — one block may hold several words). **↑ Prepared** (`queueToPreparedPlan`) puts the card at the **bottom** of that area in Prepared. ⋯: ↑ ↓, Merge with next, **To the end of the queue** (`queueToEndPlan`: an `order` op when it is already in the last file, else a move), Delete. All with Undo.
+  - An area with queue files can't be removed (`removeSectionPlan(…, queueFileCount)`).
+  - **Import:** `node scripts/import-queue.mjs <notes.txt> <area-key> <app-folder> [--size 50] [--drop <exact block>] [--date …]` splits the notes at empty or whitespace-only lines (`splitBlocks`), writes `queue/<key>/NNNN.md` into the local Dropbox app folder (the Dropbox app uploads them), refuses if the folder exists, and checks the round trip before writing. English was imported on 2026-11-24 from `FlowSnapShot.txt` (1,507 cards, 31 files; the user's `Break` marker block was dropped, "Add soon" replaces it).
 - **Cards are read-only** (the user mostly copies text from them). A tap on the text does nothing; **✎ Edit**, right after the main button on every editable card (Today, Prepared, Weekly check), opens the editor. Saving is unchanged (Save, Ctrl+Enter, or autosave when the focus leaves), and the card is read-only again. The Recall boxes are always editable. Today's main button is a bare **✓** (title "Remembered").
 - **✓ Remembered** moves a card to today's weekday file, and the cards below it move up. If the section is then below its target, the **top** Prepared card of the same section joins Today at the bottom, with meta `started=date`. If Today had more cards than the target, nothing is refilled. See `rememberPlan` in `ops.js`; its Undo restores both cards.
 - **Moving cards by hand:** "← Today" on a Prepared card pushes it into Today regardless of the target. "Preparation →" in Today's ⋯ menu puts a card back at the top of Prepared. Arrows (and the slide-out direction, `leave(ev, fn, 'left')`) point to where the target tab is.
@@ -55,7 +64,7 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
   - When a section is completely empty, the Prepared tab also blinks three times (when that happens or the app opens), not constantly.
 - **Weekly check:** on the same weekday a week later, each card that is due starts **collapsed**: only its first line shows, so the answer can't be peeked at. "Show answer" (or a tap) reveals it. Then the card gets one of two answers:
   - **Still know** → archive.
-  - **Forgot** → deleted, text copied to the clipboard.
+  - **Forgot** → back into the area's queue at the "soon" place (`forgotPlan`: a move, queue file first; `moved` dropped, `forgot=date` added; Undo). A card under a heading that isn't an area is still deleted and its text copied.
 - **Typing in the Weekly check:** each collapsed card has a box (class `typed check-typed`, `checkBox` in app.js) to type what the user remembers; no AI check here. Ctrl+Enter in the box shows the answer; ↓/↑ on the last/first line go to the next/previous card's box. A revealed card shows **"You typed" and "Card" side by side** (`cardView(..., {typed})`, `.compare`; stacked below 340px). The text lives only in this browser: localStorage `wd.checkTyped` = {date, byId} (`checkTypedFor` in recall.js), cleared on a new day. The timer colours and flashes these boxes like the Recall ones.
 - **Wrong section:** "Move to…" in the ⋯ menu (Today, Prepared, Weekly check) moves a card to another section of the same file.
 - **Remembered by mistake:** in Weekly check, the note "N cards remembered today" has Show/Hide. The list it opens offers "← Back to Today" (`backToTodayOp` drops the `moved` date).
@@ -67,9 +76,9 @@ current.md                     cards being learned now (Today)
 prepared.md                    next cards, top first (Prepared)
 week/1-mon.md … week/7-sun.md  remembered on that weekday; due when meta.moved < today (or no moved)
 archive/<section-key>/YYYY-MM.md  passed the check; one file per section per month (key: armenian/english/general)
-state.json                     { "sections": [{ "key": "armenian", "name": "Armenian" }, …, { "key": "x", "name": "X", "removed": "2026-11-23" }], "targets": { "Armenian": 2, ... }, "aiPrompt": "…" | null, "aiShortcut": "Ctrl+Shift+Digit1", "timer": { "cycles": 21, "shortcut": "Alt+KeyB" } }   (old "weekCheckDone" is ignored and kept)
+state.json                     { "sections": [{ "key": "armenian", "name": "Armenian" }, …, { "key": "x", "name": "X", "removed": "2026-11-23" }], "targets": { "Armenian": 2, ... }, "aiPrompt": "…" | null, "aiShortcut": "Ctrl+Shift+Digit1", "timer": { "cycles": 21, "shortcut": "Alt+KeyB" }, "queue": { "fileSize": 50, "soonAfter": 50 } }   (old "weekCheckDone" is ignored and kept)
+queue/<area-key>/NNNN.md       raw notes waiting to be prepared, front = lowest number, no heading (see Queue)
 ```
-Later releases add `flow/` and `queue/` next to these.
 
 ## File format v1 — must stay backward compatible
 ```
@@ -117,7 +126,7 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - **Moves:** `opTargets(op)` gives the files to write in order. A move writes **the target first, then the source**, so an interrupted move can duplicate a card but never lose it.
   - **Edit of a missing card:** an `edit` whose card is no longer in its file (moved or deleted elsewhere) re-adds the card, so the edited text is kept.
   - **Unknown op types** leave files untouched.
-- `sync.js` (pure, with the api and storage injected): `createEngine`.
+- `sync.js` (pure, with the api and storage injected): `createEngine`. The api is `list` / `download` / `upload` / `remove` (remove: only at a rev; for emptied queue files).
   - **State:** `data.files[path] = {text, rev, remoteRev}` (the last known Dropbox text), plus `data.ops`, the queue of pending ops, persisted in localStorage `wd.data`.
   - **What the UI shows:** `doc(path)` = the base text with the pending ops applied.
   - **`flush`:** for each op and each target file:
@@ -138,12 +147,13 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - The `list` / `download` / `upload` API.
   - `hdr()` escapes non-ASCII characters in `Dropbox-API-Arg`. Armenian paths would break without it.
   - The app key is in `DROPBOX_APP_KEY`; it is public by design.
+- `queue.js` (pure): `queueSettings`, `queuePath` / `queueFiles` / `isQueueFile` / `queueNumber`, `appendTarget`, `soonTarget`, `splitBlocks`, `chunk`.
 - `recall.js` (pure): `recallFor`, `checkTypedFor`, `typedTexts`, `promptOf`, `buildCheckText`, `DEFAULT_CHECK_PROMPT`, `copyShortcutOf`.
 - `timer.js` (pure): `timerState`, `timerView`, `startTimer` / `pauseTimer` / `resetTimer` / `setTotal`, `cycleEnds`, `MILESTONES` / `milestoneCycles` / `milestonesPassed` / `partOf`, `timerSettings`, `shortcutOf` / `matchesShortcut` / `shortcutLabel`. `timer-ui.js`: `mountTimer({button, panel, store, settings})` → `{refresh}`.
 - `demo.js`: `?demo` in the URL uses a fake Dropbox kept in localStorage (`demo.files`, `demo.data`). Use it for UI testing without touching real data.
 - `app.js`: the UI (tabs Today / Weekly check / Archive / Settings).
   - **Every change** goes through `commit(ops, message, undoOps)` (each argument is one op or a list) → `engine.add` → render → `flush` after 600 ms.
-  - **Undo:** Delete, Remembered, Still know and Forgot show an Undo toast that builds the inverse op.
+  - **Undo:** Delete, Remembered, Still know, Forgot and the queue moves show an Undo toast that builds the inverse op.
   - **Motion:** `leave(ev, fn)` slides a card out (200 ms) before its change is committed. After every commit, `render()` uses FLIP (`cardRects` / `playMoves`, keyed by `data-id`): the cards below glide up (380 ms) and new cards rise from below (650 ms). Motion is off with `prefers-reduced-motion`.
   - **Editing:**
     - An open editor is stored as a draft (`wd.draft`) and survives reloads.

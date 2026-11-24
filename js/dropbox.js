@@ -104,6 +104,16 @@ export function createDropbox(store) {
         body: new Blob([text]) }));
       const j = await r.json();
       return { rev: j.rev };
+    },
+    // Deletes the file only if it is still at rev (an emptied queue file); already gone counts as done.
+    // Any other 409 (e.g. the rev moved on) is treated as a conflict: the engine re-downloads and replays.
+    async remove(path, rev) {
+      try { await rpc('files/delete_v2', { path: '/' + path, parent_rev: rev }); }
+      catch (e) {
+        if (e.notFound) return;
+        if (e.status === 409) e.conflict = true;
+        throw e;
+      }
     }
   };
 
