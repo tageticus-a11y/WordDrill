@@ -93,16 +93,16 @@ export function shortcutLabel(shortcut) {
 /** Milestones of a run: at 2/5 and 4/5 of the whole time (the line under the header shows them) */
 export const MILESTONES = [0.4, 0.8];
 /**
- * The cycles after which the milestones come: 2/5 and 4/5 of the run, moved to the nearest cycle end, so a
- * milestone and a cycle end are one moment (one sound). Never at the very end; a short run may have fewer.
+ * The cycles after which the milestones come, always at a cycle end (one moment, one sound). The first two
+ * parts are equal and hold an even number of cycles, about 2/5 of the run each, so every part starts with a
+ * coloured cycle and ends with a neutral one; the last part is the smaller rest (21 → 8 + 8 + 5).
+ * Never at the very end; a short run may have fewer.
  */
 export function milestoneCycles(total) {
-  const out = [];
-  for (const f of MILESTONES) {
-    const n = Math.min(total - 1, Math.max(1, Math.round(f * total)));
-    if (n >= 1 && (!out.length || n > out[out.length - 1])) out.push(n);
-  }
-  return out;
+  let part = Math.max(2, 2 * Math.round(MILESTONES[0] * total / 2));
+  while (part > 2 && total - 2 * part < 1) part -= 2;            // the last part keeps at least one cycle
+  while (total - 2 * part >= part && total - 2 * (part + 2) >= 1) part += 2;   // and is smaller (if it can be)
+  return [part, 2 * part].filter(n => n < total);
 }
 /** Milestones passed between two moments (elapsed ms): [{ k (1-based), n (cycle), at }] */
 export function milestonesPassed(s, from, to) {

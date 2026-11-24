@@ -76,23 +76,40 @@ test('shortcuts from key presses', () => {
   assert.equal(shortcutLabel(''), 'None');
 });
 
-test('milestones at 2/5 and 4/5 of the run, on the nearest cycle end', () => {
-  assert.deepEqual(milestoneCycles(21), [8, 17]);          // 8.4 → 8, 16.8 → 17
+test('milestones: two equal parts of an even number of cycles, then a smaller last part', () => {
+  assert.deepEqual(milestoneCycles(21), [8, 16]);          // 8 + 8 + 5
+  assert.deepEqual(milestoneCycles(20), [8, 16]);          // 8 + 8 + 4
+  assert.deepEqual(milestoneCycles(30), [12, 24]);         // 12 + 12 + 6
+  assert.deepEqual(milestoneCycles(10), [4, 8]);
   assert.deepEqual(milestoneCycles(5), [2, 4]);
-  assert.deepEqual(milestoneCycles(3), [1, 2]);
-  assert.deepEqual(milestoneCycles(2), [1]);                // both round to cycle 1: one milestone
-  assert.deepEqual(milestoneCycles(1), []);                 // never at the very end
+  assert.deepEqual(milestoneCycles(4), [2]);                // the second would be the very end
+  assert.deepEqual(milestoneCycles(3), [2]);
+  assert.deepEqual(milestoneCycles(2), []);
+  assert.deepEqual(milestoneCycles(1), []);
+  for (let n = 1; n <= 200; n++) {
+    const ms = milestoneCycles(n), parts = [ms[0], ms[1] - ms[0], n - ms[1]];
+    assert.ok(ms.every(m => m % 2 === 0 && m < n), 'even parts, never at the end: ' + n);
+    if (ms.length === 2) {
+      assert.equal(parts[0], parts[1], 'equal first parts: ' + n);
+      // (with even equal parts a smaller last part isn't always possible, e.g. 12 = 4 + 4 + 4)
+      assert.ok(parts[2] >= 1 && (n < 10 || parts[2] <= parts[0]), 'last part not bigger: ' + n);
+      if ([15, 20, 21, 25, 30, 40].includes(n)) assert.ok(parts[2] < parts[0], 'smaller last part: ' + n);
+    }
+  }
   const s = timerState({ total: 21 });
   assert.deepEqual(milestonesPassed(s, 79900, 80000), [{ k: 1, n: 8, at: 80000 }]);
   assert.deepEqual(milestonesPassed(s, 80000, 80100), []);   // only once
-  assert.deepEqual(milestonesPassed(s, 0, 999999).map(m => m.at), [80000, 170000]);
+  assert.deepEqual(milestonesPassed(s, 0, 999999).map(m => m.at), [80000, 160000]);
   // a milestone is always a cycle end too
   for (const m of milestonesPassed(s, 0, 999999)) assert.equal(cycleEnds(s, m.at - 1, m.at).length, 1);
 });
 
 test('traffic-light parts: green, yellow, red; every other cycle shows the colour', () => {
   const parts = Array.from({ length: 21 }, (_, i) => partOf(21, i + 1));
-  assert.deepEqual(parts.map(p => p.part).join(''), '111111112222222223333');
-  assert.deepEqual(parts.map(p => (p.colored ? 'x' : '.')).join(''), 'x.x.x.x.x.x.x.x.xx.x.');
+  assert.deepEqual(parts.map(p => p.part).join(''), '111111112222222233333');
+  // a part ends on a neutral cycle, and the next part starts with a coloured one
+  assert.deepEqual(parts.map(p => (p.colored ? 'x' : '.')).join(''), 'x.x.x.x.x.x.x.x.x.x.x');
+  for (let n = 1; n <= 60; n++)
+    for (const m of milestoneCycles(n)) { assert.equal(partOf(n, m).colored, false); assert.equal(partOf(n, m + 1).colored, true); }
   assert.equal(partOf(1, 1).part, 1);
 });
