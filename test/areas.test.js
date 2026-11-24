@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseDoc, serializeDoc, allCards } from '../js/format.js';
 import {
   applyOp, applyStateOp, opTargets, CURRENT, PREPARED, DEFAULT_SECTIONS, sectionsList, activeSections, targetsOf,
-  addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan, renameOp, splitPlan, mergePlan, archiveOp, JOIN
+  addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan, renameOp, splitPlan, splitAllPlan, splitParts, mergePlan, archiveOp, JOIN
 } from '../js/ops.js';
 
 const WEEK = 'week/1-mon.md';
@@ -147,4 +147,43 @@ test('merge a card with the one below; Undo splits them back, interrupted merge 
   const merged = r.files[CURRENT].sections[0].cards[0];
   const s = splitPlan(CURRENT, 'Armenian', merged, 0, merged.body, 'alpha'.length);
   assert.deepEqual([s.ops[1].body, s.card.body], ['alpha', 'beta']);
+});
+
+test('split parts: at --- lines or line by line; empty parts go, a ``` box is never cut', () => {
+  const t = 'one\nline two\n\n---\n\nthree\n***\n\n---\nfour\n';
+  assert.deepEqual(splitParts(t, 'marks'), ['one\nline two', 'three', 'four']);
+  assert.deepEqual(splitParts(t, 'lines'), ['one', 'line two', 'three', 'four']);
+  assert.deepEqual(splitParts('a\n  \n\tb\r\nc', 'lines'), ['a', '\tb', 'c']);
+  // a box stays whole; in line by line it stays with the line above it
+  const box = 'word\n```\nfrom a\n---\nroot\n```\nnext\n---\nlast';
+  assert.deepEqual(splitParts(box, 'marks'), ['word\n```\nfrom a\n---\nroot\n```\nnext', 'last']);
+  assert.deepEqual(splitParts(box, 'lines'), ['word\n```\nfrom a\n---\nroot\n```', 'next', 'last']);
+  // nothing to split
+  assert.deepEqual(splitParts('only\n---', 'marks'), ['only']);
+  assert.deepEqual(splitParts('բարեւ\nпривет\nhello', 'lines'), ['բարեւ', 'привет', 'hello']);
+  assert.deepEqual(splitParts('', 'lines'), []);
+});
+
+test('split a card into many: the parts go right below in order with the same meta; replay, Undo and an interrupted split keep every text', () => {
+  const f = files();
+  const card = f[CURRENT].sections[0].cards[0];
+  const parts = splitParts('alpha\nnew one\nnew two', 'lines');
+  const p = splitAllPlan(CURRENT, 'Armenian', card, 0, parts);
+  const r = run(p.ops, { [CURRENT]: f[CURRENT] });
+  const sec = r.files[CURRENT].sections[0];
+  assert.deepEqual(sec.cards.map(c => c.body), ['alpha', 'new one', 'new two', 'beta']);
+  assert.ok(sec.cards.slice(1, 3).every(c => c.meta.added === '2026-11-01' && c.id !== card.id));
+  assert.equal(serializeDoc(run(p.ops, r.files).files[CURRENT]), serializeDoc(r.files[CURRENT]));
+  assert.equal(serializeDoc(run(p.undo, r.files).files[CURRENT]), serializeDoc(f[CURRENT]));
+  // stopped before the edit: the new cards are there and the old card still holds everything
+  for (let k = 1; k < p.ops.length; k++) {
+    const half = run(p.ops.slice(0, k), { [CURRENT]: f[CURRENT] });
+    assert.ok(allCards(half.files[CURRENT]).some(c => c.id === 'a' && c.body === 'alpha'));
+    assert.equal(allCards(half.files[CURRENT]).length, 3 + k);
+  }
+  assert.equal(splitAllPlan(CURRENT, 'Armenian', card, 0, ['one']), null);
+  // merged cards split at their --- lines come back apart
+  const [a, b] = f[CURRENT].sections[0].cards;
+  const m = run(mergePlan(CURRENT, 'Armenian', a, b, 1).ops, { [CURRENT]: f[CURRENT] }).files[CURRENT].sections[0].cards[0];
+  assert.deepEqual(splitParts(m.body, 'marks'), ['alpha', 'beta']);
 });

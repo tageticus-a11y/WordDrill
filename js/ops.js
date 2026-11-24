@@ -180,12 +180,40 @@ export function splitPlan(path, section, card, index, text, pos) {
   const a = dropEdgeRule(normalizeBody(text.slice(0, pos).replace(/[ \t]+$/, '')), true);
   const b = dropEdgeRule(normalizeBody(text.slice(pos).replace(/^[ \t]+/, '')), false);
   if (!a || !b) return null;
-  const fresh = { id: newId(), meta: { ...card.meta }, body: b };
+  const p = splitAllPlan(path, section, card, index, [a, b]);
+  return { ops: p.ops, undo: p.undo, card: p.cards[0] };
+}
+const FENCE_LINE = /^ {0,3}```/;
+/**
+ * The parts of a text for a split into many cards. mode 'marks': cut at every --- line (the ― button);
+ * mode 'lines': every non-empty line is a card. A ``` box is never cut: in 'lines' it stays with the line
+ * above it (an etymology box belongs to its word). Empty parts go; nothing else is dropped except the
+ * --- lines themselves.
+ */
+export function splitParts(text, mode) {
+  const parts = [[]];
+  let fence = false;
+  for (const line of normalizeBody(text).split('\n')) {
+    if (fence) { parts[parts.length - 1].push(line); if (FENCE_LINE.test(line)) fence = false; continue; }
+    if (FENCE_LINE.test(line)) { fence = true; parts[parts.length - 1].push(line); continue; }
+    if (HR_RE.test(line)) { parts.push([]); continue; }
+    if (mode === 'lines') { if (line.trim()) parts.push([line]); continue; }
+    parts[parts.length - 1].push(line);
+  }
+  return parts.map(p => normalizeBody(p.join('\n'))).filter(Boolean);
+}
+/**
+ * Splits a card into parts (from splitParts): the first stays in the card, the others become new cards right
+ * below it, in order, with the same meta. null if there is nothing to split.
+ */
+export function splitAllPlan(path, section, card, index, parts) {
+  if (!parts || parts.length < 2) return null;
+  const fresh = parts.slice(1).map(body => ({ id: newId(), meta: { ...card.meta }, body: normalizeBody(body) }));
   return {
-    // the new card first: an interrupted split leaves the text twice, never lost
-    ops: [{ type: 'add', path, section, card: fresh, index: index + 1 }, editOp(path, section, card, a)],
-    undo: [editOp(path, section, card, card.body), deleteOp(path, fresh.id)],
-    card: fresh
+    // the new cards first: an interrupted split leaves the text twice, never lost
+    ops: [...fresh.map((c, j) => ({ type: 'add', path, section, card: c, index: index + 1 + j })), editOp(path, section, card, parts[0])],
+    undo: [editOp(path, section, card, card.body), ...fresh.map(c => deleteOp(path, c.id))],
+    cards: fresh
   };
 }
 /** Joins a card with the one below: the upper card gets both texts, the lower one is deleted */

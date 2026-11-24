@@ -10,7 +10,7 @@ import {
   CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
   findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp,
   sectionsList, activeSections, sectionKey, addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan,
-  splitPlan, mergePlan, queueAddOp, queueToPreparedPlan, queueToEndPlan, forgotPlan
+  splitPlan, splitAllPlan, splitParts, mergePlan, queueAddOp, queueToPreparedPlan, queueToEndPlan, forgotPlan
 } from './ops.js';
 import { queueSettings, queueFiles, isQueueFile, queueNumber, queuePath, appendTarget, soonTarget, QUEUE_SECTION } from './queue.js';
 import { createVersions } from './versions.js';
@@ -19,7 +19,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '28';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '29';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -48,6 +48,7 @@ let archiveKey = null, archiveMonth = null, archiveQuery = '';
 let prepArea = store.get('wd.prepArea');      // Preparation: the area sub-tab shown
 let prepView = store.get('wd.prepView') === 'queue' ? 'queue' : 'prepared';   // Preparation: Prepared or Queue
 const queueAt = {};                          // area key → the queue file shown (front by default)
+let quickArea = store.get('wd.quickArea');   // Today → Add to a queue: the area key picked
 let editing = store.get('wd.draft');        // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
@@ -257,7 +258,7 @@ function renderEditor() {
   const set = r => { replaceText(t, r.value); t.setSelectionRange(r.start, r.end); e.text = t.value; saveDraft(); grow(); };
   const wrap = m => set(toggleWrap(t.value, t.selectionStart, t.selectionEnd, m));
   const prefix = p => set(toggleLinePrefix(t.value, t.selectionStart, t.selectionEnd, p));
-  t.addEventListener('input', () => { e.text = t.value; saveDraft(); grow(); });
+  t.addEventListener('input', () => { e.text = t.value; saveDraft(); grow(); splitButtons(); });
   t.addEventListener('keydown', ev => {
     const mod = ev.ctrlKey || ev.metaKey;
     if (mod && ev.key === 'Enter') { ev.preventDefault(); saveEdit(); }
@@ -275,6 +276,16 @@ function renderEditor() {
     }, 400);
   });
   requestAnimationFrame(grow);
+  // Split into many cards: at the --- lines (the ― button marks the places), or every line its own card
+  const many = mode => h('button', { type: 'button', class: 'split', onmousedown: ev => ev.preventDefault(), onclick: () => splitAllEdit(mode),
+    title: mode === 'marks' ? 'Split the card at every ― line (--- on a line of its own)' : 'Every non-empty line becomes a card of its own' },
+    mode === 'marks' ? '✂ At ― lines' : '✂ Line by line');
+  const atMarks = many('marks'), byLine = many('lines');
+  const splitButtons = () => {
+    atMarks.hidden = splitParts(t.value, 'marks').length < 2;
+    byLine.hidden = splitParts(t.value, 'lines').length < 2;
+  };
+  splitButtons();
   // Toolbar buttons keep the focus (and the selection) in the text box
   const tool = (label, title, fn, cls) => h('button', { type: 'button', class: 'tool ' + (cls || ''), title, 'aria-label': title,
     onmousedown: ev => ev.preventDefault(), onclick: () => keepScroll(() => { t.focus({ preventScroll: true }); fn(); }) }, label);
@@ -295,13 +306,37 @@ function renderEditor() {
       tool('H', 'Heading: # at the start of the line', () => prefix('# '), 'h'), tool('❝', 'Quote', () => prefix('> ')), tool('•', 'List', () => prefix('- ')), tool('1.', 'Numbered list', () => prefix('1. ')),
       tool('{ }', 'Box, e.g. for etymology', () => set(toggleFence(t.value, t.selectionStart, t.selectionEnd)), 'box'),
       tool('⊞', 'Table', () => set(insertTable(t.value, t.selectionStart, t.selectionEnd)), 'table'),
-      tool('―', 'Line (---)', () => set(insertRule(t.value, t.selectionStart, t.selectionEnd)), 'rule'),
+      tool('―', 'Line (---); also marks where ✂ At ― lines splits the card', () => { set(insertRule(t.value, t.selectionStart, t.selectionEnd)); splitButtons(); }, 'rule'),
       earlier.length ? tool('↺ ' + earlier.length, 'Earlier versions', () => { list.hidden = !list.hidden; }, 'hist') : null),
     t,
     list,
     h('div', { class: 'row' }, keep('Save', saveEdit, 'primary'), keep('Cancel', cancelEdit),
-      e.id ? h('button', { type: 'button', class: 'split', title: 'Split the card at the cursor: the text after it becomes a new card below',
-        onmousedown: ev => ev.preventDefault(), onclick: () => splitEdit(t.selectionStart) }, '✂ Split here') : null));
+      h('span', { class: 'splits' }, e.id ? h('button', { type: 'button', class: 'split', title: 'Split the card at the cursor: the text after it becomes a new card below',
+        onmousedown: ev => ev.preventDefault(), onclick: () => splitEdit(t.selectionStart) }, '✂ Split here') : null,
+      atMarks, byLine)));
+}
+// Splits the text being edited into many cards (mode: 'marks' or 'lines', see splitParts). A saved card keeps the
+// first part and the others go right below it; a new card is saved as that many cards.
+function splitAllEdit(mode) {
+  const e = editing;
+  if (!e) return;
+  const parts = splitParts(e.text, mode);
+  if (parts.length < 2) { toast(mode === 'marks' ? 'Put ― lines (---) where the cards should be cut, then tap again.' : 'There is only one line.'); return; }
+  if (!e.id) {
+    closeEditor();
+    const date = today(), queue = isQueueFile(e.path);
+    const ops = parts.map((body, j) => queue ? queueAddOp({ path: e.path, index: (e.index || 0) + j }, body, date) : addOp(e.path, e.section, body, date));
+    commit(ops, 'Added ' + parts.length + ' cards' + (queue ? ' to the queue: file ' + queueNumber(e.path) + (e.index < 1e9 ? ', from card ' + ((e.index || 0) + 1) : '') : '') + '.',
+      ops.map(o => deleteOp(o.path, o.card.id)));
+    return;
+  }
+  const f = findCard(engine.doc(e.path), e.id);
+  if (!f) return;
+  const p = splitAllPlan(e.path, f.section.name, f.card, f.index, parts);
+  if (f.card.body !== e.text) versions.add(e.id, f.card.body);
+  if (revealed.has(e.id)) p.cards.forEach(c => revealed.add(c.id));
+  closeEditor();
+  commit(p.ops, 'Split into ' + parts.length + ' cards.', p.undo);
 }
 // Splits the card being edited at the cursor: the text before it stays, the rest becomes a new card below
 function splitEdit(pos) {
@@ -376,7 +411,7 @@ function renderList(path) {
     const counts = sectionsOf(doc).filter(sec => sec.cards.length || targets[sec.name]).map(sec => sec.name + ' ' + sec.cards.length).join(' · ');
     return [dateLine(), recallPanel('today', 'today’s cards'),
       h('p', { class: 'note hidden-list', text: 'Today’s cards are hidden: ' + (counts || 'none') + '.' }),
-      reminder(date), preparedReminder()];
+      reminder(date), preparedReminder(), quickQueue()];
   }
   const out = isToday ? [dateLine(), recallBar('today')] : [];
   let secs = sectionsOf(doc);
@@ -437,7 +472,7 @@ function renderList(path) {
       cards,
       adding ? renderEditor() : btn('+ Add', () => startEdit(path, sec.name, null), 'add')));
   }
-  if (isToday) out.push(reminder(date), preparedReminder());
+  if (isToday) out.push(reminder(date), preparedReminder(), quickQueue());
   return out;
 }
 /* ============ Recall ============ */
@@ -622,6 +657,38 @@ async function queueTarget(key, soon) {
     // Offline with the files not on this device: soon → into the front file (about the right place), end → the last file
     return soon ? { path: paths[0] || queuePath(key, 1), index: set.soonAfter } : { path: paths[paths.length - 1] || queuePath(key, 1), index: 1e9 };
   }
+}
+// Today → Add to a queue: a note goes into the picked area's queue, soon or at the end, without leaving Today
+function quickQueue() {
+  const areas = activeSections(engine.state());
+  if (!areas.length) return null;
+  const adding = editing && !editing.id && isQueueFile(editing.path) ? editing : null;
+  const area = areas.find(a => a.key === (adding ? adding.path.split('/')[1] : quickArea)) || areas[0];
+  let soon = adding ? adding.soon !== false : true;
+  const open = (a, s) => {
+    const moving = !!editing && !editing.id && isQueueFile(editing.path);
+    // a new object right away: a save pending from the text box's blur (iOS) leaves this note alone
+    const e = moving ? (editing = { ...editing, soon: s }) : null;
+    queueTarget(a.key, s).then(t => {
+      if (moving ? editing !== e : editing) return;
+      // the open note goes to the new place with its text; or a new note
+      editing = moving ? { ...e, path: t.path, index: t.index } : { path: t.path, section: QUEUE_SECTION, id: null, index: t.index, text: '', soon: s };
+      saveDraft(); render(); focusEditor();
+    }, handleErr);
+  };
+  const pick = a => { quickArea = a.key; store.set('wd.quickArea', a.key); if (adding) open(a, soon); else render(); };
+  const keep = (label, on, fn, title) => h('button', { type: 'button', class: on ? 'on' : null, 'aria-pressed': String(on), title,
+    onmousedown: ev => ev.preventDefault(), onclick: fn }, label);
+  const add = s => btn(s ? '+ Soon' : '+ To the end', () => { autoSave(); open(area, s); }, 'add',
+    s ? 'After the first ' + queueSettings(engine.state()).soonAfter + ' cards of the ' + area.name + ' queue' : 'At the end of the ' + area.name + ' queue');
+  return h('section', { class: 'sec quick-queue keep-edit' },
+    h('h2', { text: 'Add to a queue' }),
+    h('div', { class: 'seg' }, areas.map(a => keep(a.name, a === area, () => pick(a)))),
+    adding ? [
+      h('div', { class: 'seg' }, keep('Soon', soon, () => open(area, true), 'After the first cards of the queue'), keep('At the end', !soon, () => open(area, false))),
+      h('p', { class: 'note', text: area.name + ' queue, file ' + queueNumber(adding.path) + (adding.index < 1e9 ? ', card ' + (adding.index + 1) : ', at the end') + '. ✂ Line by line saves each line as a card.' }),
+      renderEditor()]
+    : h('div', { class: 'row queue-add' }, add(true), add(false)));
 }
 function renderQueue(area) {
   // a file just emptied is deleted on the next flush: not shown meanwhile
@@ -1032,7 +1099,7 @@ function wire() {
   // (its handlers still run, even though the page was redrawn).
   document.addEventListener('click', ev => {
     if (!ev.isTrusted) return;   // not a real tap (a script click)
-    if (editing && !(ev.target.closest && ev.target.closest('.editor'))) autoSave();
+    if (editing && !(ev.target.closest && ev.target.closest('.editor, .keep-edit button'))) autoSave();
   }, true);
   window.addEventListener('online', sync);
   window.addEventListener('offline', () => updateStatus());
