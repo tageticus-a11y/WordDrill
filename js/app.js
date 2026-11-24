@@ -18,7 +18,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '26';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '27';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -44,6 +44,7 @@ const engine = createEngine({ api: dbx.api, storage: store, key: DEMO ? 'demo.da
 let tab = store.get('wd.tab') || 'today';
 let checkDay = null;                        // weekday number picked in Weekly check; null = today
 let archiveKey = null, archiveMonth = null, archiveQuery = '';
+let prepArea = store.get('wd.prepArea');      // Preparation: the area sub-tab shown
 let editing = store.get('wd.draft');        // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
@@ -369,9 +370,24 @@ function renderList(path) {
       reminder(date), preparedReminder()];
   }
   const out = [isToday ? dateLine()
-    : h('p', { class: 'date', text: 'Next cards, top first. ✓ (Remembered) in Today brings the top card of the same section into Today.' })];
+    : h('p', { class: 'date', text: 'Next cards, top first. ✓ (Remembered) in Today brings the top card of the same area into Today.' })];
   if (isToday) out.push(recallBar('today'));
-  for (const sec of sectionsOf(doc)) {
+  let secs = sectionsOf(doc);
+  if (!isToday) {
+    // Preparation: one sub-tab per area with its count; red when it holds less than a day's target
+    const names = secs.map(s => s.name);
+    if (editing && editing.path === path && names.includes(editing.section)) prepArea = editing.section;
+    if (!names.includes(prepArea)) prepArea = names[0];
+    out.push(h('div', { class: 'subtabs', role: 'tablist' }, secs.map(sec => {
+      const target = targets[sec.name] || 0, low = target > 0 && sec.cards.length < target, on = sec.name === prepArea;
+      return h('button', { type: 'button', role: 'tab', 'aria-selected': String(on), class: 'subtab' + (on ? ' on' : '') + (low ? ' low' : ''),
+        title: plural(sec.cards.length, 'card') + ' prepared' + (target ? ', ' + target + ' a day' : '') + (low ? ': not enough for tomorrow' : ''),
+        onclick: () => openPrepArea(sec.name) },
+        sec.name || 'No area', h('span', { class: 'n', text: String(sec.cards.length) }));
+    })));
+    secs = secs.filter(s => s.name === prepArea);
+  }
+  for (const sec of secs) {
     const ids = sec.cards.map(c => c.id);
     const target = targets[sec.name] || 0;
     const cards = sec.cards.map((card, i) => {
@@ -380,7 +396,7 @@ function renderList(path) {
       const main = isToday
         ? h('button', { type: 'button', class: 'primary remember', title: 'Remembered', 'aria-label': 'Remembered', onclick: ev => leave(ev, () => {
           const plan = rememberPlan(engine.doc(CURRENT), engine.doc(PREPARED), sec.name, card, date, target);
-          commit(plan.ops, 'Moved to ' + weekday(date).name + '’s check.' + (plan.refill ? ' Next card added from Prepared.' : ''), plan.undo);
+          commit(plan.ops, 'Moved to ' + weekday(date).name + '’s check.' + (plan.refill ? ' Next card added from Preparation.' : ''), plan.undo);
         }) }, '✓')
         : btn('← Today', ev => leave(ev, () => commit(toTodayOp(sec.name, card, date), 'Moved to Today.', moveOp(CURRENT, PREPARED, sec.name, card, {}, i)), 'left'), 'primary');
       const actions = [main, btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')];
@@ -389,16 +405,15 @@ function renderList(path) {
         h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
         sectionPicker(path, sec.name, card, i),
         mergeButton(path, sec.name, card, sec.cards[i + 1], i + 1),
-        isToday ? btn('Prepared →', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Prepared.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null,
+        isToday ? btn('Preparation →', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Preparation.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null,
         btn('Delete', ev => leave(ev, () => { menuFor = null; commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)); }), 'danger')));
       return cardView(card, { path, section: sec.name, actions });
     });
     const adding = editing && editing.path === path && !editing.id && editing.section === sec.name;
     const low = !isToday && target > 0 && sec.cards.length < target;
     out.push(h('section', { class: 'sec' },
-      h('h2', {}, sec.name,
-        h('span', { class: 'count', text: isToday ? sec.cards.length + ' / ' + target : String(sec.cards.length) }),
-        low ? h('span', { class: 'low', text: sec.cards.length ? 'less than a day’s ' + target : 'empty' }) : null),
+      isToday ? h('h2', {}, sec.name, h('span', { class: 'count', text: sec.cards.length + ' / ' + target }))
+        : low ? h('p', { class: 'low', text: (sec.cards.length ? 'Less than a day’s ' + target + ': not enough for tomorrow.' : 'Empty: nothing for tomorrow.') }) : null,
       cards,
       adding ? renderEditor() : btn('+ Add', () => startEdit(path, sec.name, null), 'add')));
   }
@@ -552,8 +567,12 @@ function preparedReminder() {
   const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));
   if (!short.length) return null;
   return h('div', { class: 'reminder' },
-    h('span', { text: 'Prepared is running low: ' + short.map(x => x.section + ' ' + x.have + ' of ' + x.need).join(', ') + '.' }),
-    btn('Open Prepared', () => setTab('prepared'), 'primary'));
+    h('span', { text: 'Preparation is running low: ' + short.map(x => x.section + ' ' + x.have + ' of ' + x.need).join(', ') + '.' }),
+    btn('Open Preparation', () => { prepArea = short[0].section; setTab('prepared'); }, 'primary'));
+}
+function openPrepArea(name) {
+  prepArea = name; store.set('wd.prepArea', name); menuFor = null;
+  render();
 }
 // Cards remembered on this weekday in earlier weeks, waiting for today's check
 const dueToday = date => allCards(engine.doc(weekday(date).file)).filter(c => isDue(c, date)).length;
@@ -751,7 +770,7 @@ function areasSettings() {
     onkeydown: ev => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } } });
   const add = () => applyPlan(addSectionPlan(engine.state(), name.value, engine.paths('archive/').map(p => p.split('/')[1])));
   return h('section', { class: 'sec' }, h('h2', { text: 'Areas and cards per day' }),
-    h('p', { class: 'note', text: 'The number is how many cards an area keeps in Today: ✓ (Remembered) tops it up from Prepared, and Prepared warns when it holds less. Renaming changes the headings in your files; the archive stays where it is. An area can be removed once it has no cards in Today, Prepared or the weekly check; its archive stays.' }),
+    h('p', { class: 'note', text: 'The number is how many cards an area keeps in Today: ✓ (Remembered) tops it up from Preparation, and Preparation warns when it holds less. Renaming changes the headings in your files; the archive stays where it is. An area can be removed once it has no cards in Today, Preparation or the weekly check; its archive stays.' }),
     h('div', { class: 'areas' }, rows),
     h('div', { class: 'area add-area' }, name, btn('+ Add area', add)),
     removed.length ? h('p', { class: 'note' }, 'Removed: ',

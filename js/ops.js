@@ -140,7 +140,7 @@ export function removeSectionPlan(state, key, docs, date) {
   if (!area) return { error: 'No such area.' };
   if (list.filter(s => !s.removed).length < 2) return { error: 'At least one area must stay.' };
   const n = docs.reduce((k, d) => k + (d.sections.find(s => s.name === area.name) || { cards: [] }).cards.length, 0);
-  if (n) return { error: area.name + ' still has ' + n + (n === 1 ? ' card' : ' cards') + ' in Today, Prepared or the weekly check. Move them to another area (⋯ → Move to…) or delete them first.' };
+  if (n) return { error: area.name + ' still has ' + n + (n === 1 ? ' card' : ' cards') + ' in Today, Preparation or the weekly check. Move them to another area (⋯ → Move to…) or delete them first.' };
   return {
     ops: [stateOp('sections', list.map(s => s === area ? { ...s, removed: date } : s))],
     undo: [stateOp('sections', savedOr(state, 'sections'))],

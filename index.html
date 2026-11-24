@@ -60,7 +60,7 @@
   .titlebar { display: flex; align-items: center; gap: 12px; padding-top: 8px; }
   .titlebar h1 { font-size: 20px; margin: 0; color: var(--accent); }
   #sync { flex: 1; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  nav { display: flex; gap: 2px; padding: 6px 0 8px; }
+  nav { display: flex; gap: 2px; padding: 6px 0 8px; overflow-x: auto; scrollbar-width: none; }
   nav button { border: 0; background: none; color: var(--muted); font-weight: 600; padding: 6px 9px; position: relative; white-space: nowrap; }
   @media (max-width: 400px) { nav button { padding: 6px 6px; font-size: 15px; } }
   nav button.on { color: var(--ink); background: var(--tint); }
@@ -100,6 +100,17 @@
   .sec h2 { font-size: 19px; margin: 0 0 8px; color: var(--accent); display: flex; align-items: baseline; gap: 8px; }
   .count { font-size: 14px; color: var(--muted); font-weight: 400; }
   .low { font-size: 13px; color: var(--alert); font-weight: 600; }
+  p.low { margin: 0 0 8px; }
+  /* Preparation: one sub-tab per area with its count; red when not enough for tomorrow */
+  .subtabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .subtab, .subtab.low { display: inline-flex; align-items: baseline; gap: 6px; font-size: 16px; font-weight: 600; padding: 5px 12px; border-radius: 999px; }
+  .subtab .n { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .subtab.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .subtab.on .n { color: inherit; opacity: .85; }
+  .subtab.low { color: var(--alert); border-color: var(--alert); background: var(--alert-tint); }
+  .subtab.low .n { color: var(--alert); font-weight: 700; }
+  .subtab.low.on { background: var(--alert); border-color: var(--alert); color: var(--on-accent); }
+  .subtab.low.on .n { color: inherit; }
   .targets { display: flex; flex-wrap: wrap; gap: 16px; }
   .targets label { display: flex; align-items: center; gap: 8px; }
   .area { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
@@ -283,7 +294,7 @@
       <nav>
         <button type="button" data-tab="today">Today</button>
         <button type="button" data-tab="check">Weekly check<span id="checkBadge" class="badge" hidden></span></button>
-        <button type="button" data-tab="prepared">Prepared<span id="preparedBadge" class="badge" hidden></span></button>
+        <button type="button" data-tab="prepared">Preparation<span id="preparedBadge" class="badge" hidden></span></button>
         <button type="button" data-tab="archive">Archive</button>
       </nav>
     </div>
