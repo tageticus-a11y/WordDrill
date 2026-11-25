@@ -19,7 +19,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '30';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '31';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -48,7 +48,9 @@ let archiveKey = null, archiveMonth = null, archiveQuery = '';
 let prepArea = store.get('wd.prepArea');      // Preparation: the area sub-tab shown
 let prepView = store.get('wd.prepView') === 'queue' ? 'queue' : 'prepared';   // Preparation: Prepared or Queue
 const queueAt = {};                          // area key → the queue file shown (front by default)
-let quickArea = store.get('wd.quickArea');   // Today → Add to a queue: the area key picked
+let quickArea = store.get('wd.quickArea');   // How to add several cards at once (above an editor for new queue cards)
+const manyHint = () => h('p', { class: 'note', text: 'One card: type and Save. Several: one per line, then ✂ Save line by line; or put ― lines between them (the ― button), then ✂ Save at ― lines.' });
+// Today → Add to a queue: the area key picked
 let editing = store.get('wd.draft');        // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
@@ -279,11 +281,12 @@ function renderEditor() {
   // Split into many cards: at the --- lines (the ― button marks the places), or every line its own card
   const many = mode => h('button', { type: 'button', class: 'split', onmousedown: ev => ev.preventDefault(), onclick: () => splitAllEdit(mode),
     title: mode === 'marks' ? 'Split the card at every ― line (--- on a line of its own)' : 'Every non-empty line becomes a card of its own' },
-    mode === 'marks' ? '✂ At ― lines' : '✂ Line by line');
+    (e.id ? '✂ ' : '✂ Save ') + (mode === 'marks' ? 'at ― lines' : 'line by line').replace(/^./, c => e.id ? c.toUpperCase() : c));
   const atMarks = many('marks'), byLine = many('lines');
   const splitButtons = () => {
-    atMarks.hidden = splitParts(t.value, 'marks').length < 2;
-    byLine.hidden = splitParts(t.value, 'lines').length < 2;
+    // always shown (so they can be found), dimmed while there is nothing to split; a tap then explains
+    atMarks.classList.toggle('idle', splitParts(t.value, 'marks').length < 2);
+    byLine.classList.toggle('idle', splitParts(t.value, 'lines').length < 2);
   };
   splitButtons();
   // Toolbar buttons keep the focus (and the selection) in the text box
@@ -686,7 +689,7 @@ function quickQueue() {
     h('div', { class: 'seg' }, areas.map(a => keep(a.name, a === area, () => pick(a)))),
     adding ? [
       h('div', { class: 'seg' }, keep('Soon', soon, () => open(area, true), 'After the first cards of the queue'), keep('At the end', !soon, () => open(area, false))),
-      h('p', { class: 'note', text: area.name + ' queue, file ' + queueNumber(adding.path) + (adding.index < 1e9 ? ', card ' + (adding.index + 1) : ', at the end') + '. ✂ Line by line saves each line as a card.' }),
+      h('p', { class: 'note', text: area.name + ' queue, file ' + queueNumber(adding.path) + (adding.index < 1e9 ? ', card ' + (adding.index + 1) : ', at the end') + '.' }), manyHint(),
       renderEditor()]
     : h('div', { class: 'row queue-add' }, add(true), add(false)));
 }
@@ -699,7 +702,7 @@ function renderQueue(area) {
     queueTarget(key, soon).then(t => startEdit(t.path, QUEUE_SECTION, null, t.index), handleErr);
   }, 'add', soon ? 'After the first ' + set.soonAfter + ' cards of the queue' : 'At the end of the queue');
   const out = [h('p', { class: 'date', text: 'Notes waiting to become cards, front first. ↑ Prepared puts one at the end of Prepared.' })];
-  if (adding) out.push(h('p', { class: 'note', text: 'New card: file ' + queueNumber(editing.path) + (editing.index < 1e9 ? ', card ' + (editing.index + 1) : ', at the end') + '.' }), renderEditor());
+  if (adding) out.push(h('p', { class: 'note', text: 'New card: file ' + queueNumber(editing.path) + (editing.index < 1e9 ? ', card ' + (editing.index + 1) : ', at the end') + '.' }), manyHint(), renderEditor());
   else out.push(h('div', { class: 'row queue-add' }, addBtn(true), addBtn(false)));
   if (!paths.length) { out.push(h('p', { class: 'empty', text: 'The ' + area.name + ' queue is empty.' })); return out; }
   let p = queueAt[key];
