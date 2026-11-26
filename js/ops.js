@@ -296,13 +296,22 @@ export function preparedShortage(prepared, targets) {
     .map(([section, need]) => ({ section, have: cardsIn(prepared, section).length, need }))
     .filter(x => x.have < x.need);
 }
-/** How long Preparation lasts for an area: P cards prepared / T a day → {days: P/T (one decimal), percent: P/T×100}; null without a target */
+/** How long Preparation lasts for an area: P cards prepared / T a day → {days: P/T, one decimal}; null without a target */
 export function coverage(prepared, target) {
   if (!(target > 0)) return null;
-  const r = prepared / target;
-  return { days: Math.round(r * 10) / 10, percent: Math.round(r * 100) };
+  return { days: Math.round(prepared / target * 10) / 10 };
 }
-export const coverageText = c => '(' + c.days + (c.days === 1 ? ' day' : ' days') + ', ' + c.percent + '%)';
+export const daysText = d => d + (d === 1 ? ' day' : ' days');
+export const coverageText = c => '(' + daysText(c.days) + ')';
+/** The shortest coverage over the areas with a target: {days, section} or null */
+export function minCoverage(prepared, targets) {
+  let min = null;
+  for (const [section, t] of Object.entries(targets)) {
+    const c = coverage(cardsIn(prepared, section).length, t);
+    if (c && (!min || c.days < min.days)) min = { days: c.days, section };
+  }
+  return min;
+}
 
 /** Files an op writes, in write order */
 export const opTargets = op =>

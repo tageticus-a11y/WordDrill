@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseDoc, serializeDoc, allCards } from '../js/format.js';
 import {
   applyOp, applyStateOp, opTargets, CURRENT, PREPARED, DEFAULT_SECTIONS, sectionsList, activeSections, targetsOf,
-  addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan, renameOp, splitPlan, splitAllPlan, coverage, coverageText, splitParts, mergePlan, archiveOp, JOIN
+  addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan, renameOp, splitPlan, splitAllPlan, coverage, coverageText, minCoverage, splitParts, mergePlan, archiveOp, JOIN
 } from '../js/ops.js';
 
 const WEEK = 'week/1-mon.md';
@@ -188,13 +188,18 @@ test('split a card into many: the parts go right below in order with the same me
   assert.deepEqual(splitParts(m.body, 'marks'), ['alpha', 'beta']);
 });
 
-test('coverage: days and percent of a day that Preparation lasts (P / T)', () => {
-  assert.deepEqual(coverage(5, 2), { days: 2.5, percent: 250 });
-  assert.deepEqual(coverage(0, 2), { days: 0, percent: 0 });
+test('coverage: the days Preparation lasts (P / T); the shortest over the areas', () => {
+  assert.deepEqual(coverage(5, 2), { days: 2.5 });
+  assert.deepEqual(coverage(0, 2), { days: 0 });
   assert.equal(coverage(3, 0), null);
   assert.equal(coverage(3, undefined), null);
-  assert.deepEqual(coverage(1, 3), { days: 0.3, percent: 33 });
-  assert.equal(coverageText(coverage(5, 2)), '(2.5 days, 250%)');
-  assert.equal(coverageText(coverage(2, 2)), '(1 day, 100%)');
-  assert.equal(coverageText(coverage(0, 1)), '(0 days, 0%)');
+  assert.deepEqual(coverage(1, 3), { days: 0.3 });
+  assert.equal(coverageText(coverage(5, 2)), '(2.5 days)');
+  assert.equal(coverageText(coverage(2, 2)), '(1 day)');
+  assert.equal(coverageText(coverage(0, 1)), '(0 days)');
+  // Armenian 12 at 2 = 6 days, English 2 at 2 = 1 day → 1 (English); an area without a target doesn't count
+  const prep = parseDoc('<!-- worddrill v1 -->\n\n## Armenian\n\n' + Array.from({ length: 12 }, (_, i) => '<!-- card id=a' + i + ' -->\nx\n').join('\n') + '\n## English\n\n<!-- card id=e1 -->\ny\n\n<!-- card id=e2 -->\nz\n');
+  assert.deepEqual(minCoverage(prep, { Armenian: 2, English: 2, Extra: 0 }), { days: 1, section: 'English' });
+  assert.deepEqual(minCoverage(prep, { Armenian: 2, General: 1 }), { days: 0, section: 'General' });
+  assert.equal(minCoverage(prep, {}), null);
 });

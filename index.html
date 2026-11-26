@@ -120,6 +120,10 @@
   /* Today: how long Preparation lasts per area */
   .cover { margin-left: 8px; font-size: 14px; font-weight: 500; color: var(--muted); }
   .cover.low { color: var(--alert); }
+  .tab-days { margin-left: 5px; font-size: 13px; font-weight: 500; color: var(--muted); }
+  .tab-days.low { color: var(--alert); }
+  /* Delete at the end of a card's row (on a computer) */
+  .actions .end { margin-left: auto; }
   /* Settings: the bookmarklet link (dragged to the bookmarks bar) */
   a.bookmarklet { display: inline-block; padding: 6px 14px; border: 1px dashed var(--rule); border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 600; cursor: grab; }
   pre.captured { white-space: pre-wrap; background: var(--tint); padding: 10px; border-radius: 10px; max-height: 40vh; overflow: auto; }
@@ -314,7 +318,7 @@
       <nav>
         <button type="button" data-tab="today">Today</button>
         <button type="button" data-tab="check">Weekly check<span id="checkBadge" class="badge" hidden></span></button>
-        <button type="button" data-tab="prepared">Preparation<span id="preparedBadge" class="badge" hidden></span></button>
+        <button type="button" data-tab="prepared">Preparation<span id="prepDays" class="tab-days" hidden></span><span id="preparedBadge" class="badge" hidden></span></button>
         <button type="button" data-tab="archive">Archive</button>
       </nav>
     </div>

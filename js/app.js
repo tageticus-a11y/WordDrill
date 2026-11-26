@@ -10,7 +10,7 @@ import {
   CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
   findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp,
   sectionsList, activeSections, sectionKey, addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan,
-  splitPlan, splitAllPlan, splitParts, coverage, coverageText, mergePlan, queueAddOp, queueToPreparedPlan, queueToEndPlan, forgotPlan
+  splitPlan, splitAllPlan, splitParts, coverage, coverageText, minCoverage, daysText, mergePlan, queueAddOp, queueToPreparedPlan, queueToEndPlan, forgotPlan
 } from './ops.js';
 import { queueSettings, queueFiles, isQueueFile, queueNumber, queuePath, appendTarget, soonTarget, QUEUE_SECTION } from './queue.js';
 import { createVersions } from './versions.js';
@@ -20,7 +20,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '32';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '33';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -549,14 +549,12 @@ function renderList(path) {
           commit(plan.ops, 'Moved to ' + weekday(date).name + '’s check.' + (plan.refill ? ' Next card added from Preparation.' : ''), plan.undo);
         }) }, '✓')
         : btn('← Today', ev => leave(ev, () => commit(toTodayOp(sec.name, card, date), 'Moved to Today.', moveOp(CURRENT, PREPARED, sec.name, card, {}, i)), 'left'), 'primary');
-      const actions = [main, btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')];
-      if (more) actions.push(h('span', { class: 'more' },
-        h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swap(i - 1) }, '↑'),
-        h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
-        sectionPicker(path, sec.name, card, i),
-        mergeButton(path, sec.name, card, sec.cards[i + 1], i + 1),
-        isToday ? btn('Preparation →', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Preparation.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null,
-        btn('Delete', ev => leave(ev, () => { menuFor = null; commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)); }), 'danger')));
+      const actions = cardButtons(main, card.id, more, {
+        up: i > 0 && (() => swap(i - 1)), down: i < sec.cards.length - 1 && (() => swap(i + 1)),
+        del: () => commit(deleteOp(path, card.id), 'Card deleted.', restoreOp(path, sec.name, card, i)),
+        rest: [sectionPicker(path, sec.name, card, i), mergeButton(path, sec.name, card, sec.cards[i + 1], i + 1),
+          isToday ? btn('Preparation →', ev => leave(ev, () => { menuFor = null; commit(toPreparedOp(sec.name, card), 'Moved back to the top of Preparation.', moveOp(PREPARED, CURRENT, sec.name, card, {}, i)); })) : null]
+      });
       return cardView(card, { path, section: sec.name, actions });
     });
     const adding = editing && editing.path === path && !editing.id && editing.section === sec.name;
@@ -575,7 +573,18 @@ const preparedCount = name => (sectionsOf(engine.doc(PREPARED)).find(s => s.name
 const covers = (name, targets) => { const c = coverage(preparedCount(name), targets[name]); return c ? ' ' + coverageText(c) : ''; };
 function coverView(name, target) {
   const c = coverage(preparedCount(name), target);
-  return c ? h('span', { class: 'cover' + (c.days < 1 ? ' low' : ''), title: 'Preparation lasts ' + c.days + (c.days === 1 ? ' day' : ' days') + ' at ' + target + ' a day', text: coverageText(c) }) : null;
+  return c ? h('span', { class: 'cover' + (c.days < 1 ? ' low' : ''), title: 'Preparation lasts ' + daysText(c.days) + ' at ' + target + ' a day', text: coverageText(c) }) : null;
+}
+// A card's buttons: main, then ⋯ (the other actions). On a computer ↑ ↓ and Delete stay in the row; on a
+// phone (touch) they are under ⋯ with the rest.
+const desktop = () => matchMedia('(hover: hover) and (pointer: fine)').matches;
+function cardButtons(main, id, more, { up, down, del, rest }) {
+  const toggle = btn('⋯', () => { menuFor = more ? null : id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions');
+  const arrow = (label, title, fn) => h('button', { type: 'button', class: 'icon', title, 'aria-label': title, disabled: !fn, onclick: fn || null }, label);
+  const ud = [arrow('↑', 'Move up', up), arrow('↓', 'Move down', down)];
+  const delBtn = btn('Delete', ev => leave(ev, () => { menuFor = null; del(); }), 'danger' + (desktop() ? ' end' : ''));
+  if (desktop()) return [main, ...ud, toggle, more ? h('span', { class: 'more' }, rest) : null, delBtn];
+  return [main, toggle, more ? h('span', { class: 'more' }, ud, rest, delBtn) : null];
 }
 /* ============ Recall ============ */
 // k: 'today' (the only Recall list now)
@@ -823,18 +832,17 @@ function renderQueue(area) {
     const ids = sec.cards.map(c => c.id), more = menuFor === card.id;
     const swap = j => { const n = ids.slice(); [n[i], n[j]] = [n[j], n[i]]; commit(orderOp(p, sec.name, n)); };
     const run = plan => commit(plan.ops, plan.message, plan.undo);
-    const actions = [
+    const actions = cardButtons(
       btn('↑ Prepared', ev => leave(ev, () => run(queueToPreparedPlan(p, area.name, card, i))), 'primary', 'To the end of Prepared ' + area.name),
-      btn('⋯', () => { menuFor = more ? null : card.id; render(); }, 'icon' + (more ? ' on' : ''), 'More actions')];
-    if (more) actions.push(h('span', { class: 'more' },
-      h('button', { type: 'button', class: 'icon', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => swap(i - 1) }, '↑'),
-      h('button', { type: 'button', class: 'icon', title: 'Move down', 'aria-label': 'Move down', disabled: i === sec.cards.length - 1, onclick: () => swap(i + 1) }, '↓'),
-      mergeButton(p, sec.name, card, sec.cards[i + 1], i + 1),
-      btn('To the end of the queue', ev => leave(ev, () => {
-        menuFor = null;
-        return queueTarget(key, false).then(t => run(queueToEndPlan(engine.doc(p), p, card, i, t)), e => { handleErr(e); render(); });
-      })),
-      btn('Delete', ev => leave(ev, () => { menuFor = null; commit(deleteOp(p, card.id), 'Card deleted.', restoreOp(p, sec.name, card, i)); }), 'danger')));
+      card.id, more, {
+        up: i > 0 && (() => swap(i - 1)), down: i < sec.cards.length - 1 && (() => swap(i + 1)),
+        del: () => commit(deleteOp(p, card.id), 'Card deleted.', restoreOp(p, sec.name, card, i)),
+        rest: [mergeButton(p, sec.name, card, sec.cards[i + 1], i + 1),
+          btn('To the end of the queue', ev => leave(ev, () => {
+            menuFor = null;
+            return queueTarget(key, false).then(t => run(queueToEndPlan(engine.doc(p), p, card, i, t)), e => { handleErr(e); render(); });
+          }))]
+      });
     return cardView(card, { path: p, section: sec.name, actions });
   })));
   if (at < paths.length - 1 && items.length > 3) out.push(btn('Next file ›', () => { go(1); window.scrollTo(0, 0); }, 'add'));
@@ -1159,6 +1167,14 @@ function render() {
   $('#checkBadge').hidden = !dueToday(today());
   const short = preparedShortage(engine.doc(PREPARED), targetsOf(engine.state()));
   $('#preparedBadge').hidden = !short.length;
+  // The Preparation tab: the shortest coverage over the areas ("1d" when Armenian has 6 days and English 1)
+  const least = minCoverage(engine.doc(PREPARED), targetsOf(engine.state())), days = $('#prepDays');
+  days.hidden = !least;
+  if (least) {
+    days.textContent = least.days + 'd';
+    days.classList.toggle('low', least.days < 1);
+    days.title = 'Preparation lasts at least ' + daysText(least.days) + ' (' + least.section + ')';
+  }
   $('[data-tab=prepared]').classList.toggle('blink', short.some(x => x.have === 0));
 }
 
