@@ -35,7 +35,7 @@ jobs:
       - name: Collect the app files (no tests or docs)
         run: |
           mkdir _site
-          cp -r index.html sw.js manifest.webmanifest icon-*.png js _site/
+          cp -r index.html add.html sw.js manifest.webmanifest add.webmanifest icon-*.png js _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

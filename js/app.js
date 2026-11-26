@@ -14,13 +14,13 @@ import {
 } from './ops.js';
 import { queueSettings, queueFiles, isQueueFile, queueNumber, queuePath, appendTarget, soonTarget, QUEUE_SECTION } from './queue.js';
 import { createVersions } from './versions.js';
-import { captureText, captureUrl, bookmarklet, joinCapture, CAPTURE_LOCK } from './capture.js';
+import { captureText, captureMode, captureUrl, bookmarklet, joinCapture, CAPTURE_LOCK } from './capture.js';
 import { mountTimer } from './timer-ui.js';
 import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, DEFAULT_SHORTCUT } from './timer.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '34';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '35';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -43,7 +43,8 @@ const dbx = DEMO ? createDemoDropbox(store) : createDropbox(store);
 // Capture window (?add=…, opened by the bookmarklet in Settings): works like a separate device with its own
 // storage keys, so it never overwrites the pending changes of a WordDrill tab that is open at the same time.
 // Its engine is made once it holds the capture lock (see startCapture).
-const CAPTURE = new URLSearchParams(location.search).has('add');
+// WD Add (add.html → ?app=add) is the same page as a small app of its own: after Save the next note is ready.
+const { capture: CAPTURE, app: APP_MODE } = captureMode(location.search);
 const CAPTURE_KEY = DEMO ? 'demo.capture' : 'wd.capture';
 const DRAFT_KEY = CAPTURE ? 'wd.captureDraft' : 'wd.draft';
 let engine = CAPTURE ? null : createEngine({ api: dbx.api, storage: store, key: DEMO ? 'demo.data' : 'wd.data' });
@@ -213,7 +214,10 @@ function playMoves(before) {
 }
 
 /* ============ Editing ============ */
-function saveDraft() { if (editing) store.set(DRAFT_KEY, editing); else store.del(DRAFT_KEY); }
+function saveDraft() {
+  if (editing) store.set(DRAFT_KEY, editing); else store.del(DRAFT_KEY);
+  if (CAPTURE && editing && !editing.id) captureSoon = editing.soon !== false;
+}
 function startEdit(path, section, card, index) {
   if (editing) {
     if (editing.id === (card && card.id) && editing.path === path) return;
@@ -304,6 +308,15 @@ function renderEditor() {
   const tool = (label, title, fn, cls) => h('button', { type: 'button', class: 'tool ' + (cls || ''), title, 'aria-label': title,
     onmousedown: ev => ev.preventDefault(), onclick: () => keepScroll(() => { t.focus({ preventScroll: true }); fn(); }) }, label);
   const keep = (label, fn, cls) => h('button', { type: 'button', class: cls, onmousedown: ev => ev.preventDefault(), onclick: fn }, label);
+  // WD Add and the other capture pages: 📋 Paste (iOS asks with its own Paste bubble)
+  const paste = CAPTURE && navigator.clipboard && navigator.clipboard.readText ? keep('📋 Paste', () => {
+    navigator.clipboard.readText().then(txt => {
+      if (!txt) { toast('The clipboard is empty.'); return; }
+      t.focus({ preventScroll: true });
+      t.setRangeText(txt.replace(/\r\n?/g, '\n'), t.selectionStart, t.selectionEnd, 'end');
+      e.text = t.value; saveDraft(); grow(); splitButtons();
+    }, () => toast('Couldn’t read the clipboard. Long-press in the box and choose Paste.'));
+  }, 'paste') : null;
   // Earlier texts of this card from this session; picking one puts it in the text box
   const earlier = e.id ? versions.list(e.id) : [];
   const list = h('div', { class: 'versions', hidden: true },
@@ -324,7 +337,7 @@ function renderEditor() {
       earlier.length ? tool('↺ ' + earlier.length, 'Earlier versions', () => { list.hidden = !list.hidden; }, 'hist') : null),
     t,
     list,
-    h('div', { class: 'row' }, keep('Save', saveEdit, 'primary'), keep('Cancel', cancelEdit),
+    h('div', { class: 'row' }, keep('Save', saveEdit, 'primary'), paste, keep('Cancel', cancelEdit),
       h('span', { class: 'splits' }, e.id ? h('button', { type: 'button', class: 'split', title: 'Split the card at the cursor: the text after it becomes a new card below',
         onmousedown: ev => ev.preventDefault(), onclick: () => splitEdit(t.selectionStart) }, '✂ Split here') : null,
       atMarks, byLine)));
@@ -693,7 +706,7 @@ async function queueTarget(key, soon) {
 const manyHint = () => h('p', { class: 'note', text: 'One card: type and Save. Several: one per line, then ✂ Save line by line; or put ― lines between them (the ― button), then ✂ Save at ― lines.' });
 const queueName = p => { const a = sectionsList(engine.state()).find(x => x.key === p.split('/')[1]); return (a ? a.name + ' ' : '') + 'queue'; };
 /* ============ Capture window ============ */
-let captureCut = false, captureReady = false, captureDone = null;
+let captureCut = false, captureReady = false, captureDone = null, captureSoon = true;
 const CAPTURE_TEXT = 'wd.captureText';   // text that came in while not signed in, kept for the next time
 // Saves at once. When everything is in Dropbox: the bookmarklet's window closes; a page opened by the iPhone
 // Shortcut (Safari can't close it) says it is saved and offers another note.
@@ -702,17 +715,18 @@ async function captureSave(message) {
   try { await engine.flush(); } catch (e) { handleErr(e); }
   updateStatus();
   if (engine.pending()) { render(); return; }   // the view offers Try again
+  if (APP_MODE) { toast(message || 'Saved.'); newCaptureNote('', captureSoon); return; }   // WD Add: the next note
   captureDone = message || 'Saved.';
   render();
   if (window.opener) { toast(captureDone); setTimeout(() => window.close(), 1500); }
 }
-// A new note at the soon place of the last area picked (text: what came in)
-async function newCaptureNote(text) {
+// A new note in the last area picked, soon (or at the end); text: what came in
+async function newCaptureNote(text, soon = true) {
   const areas = activeSections(engine.state());
   const area = areas.find(a => a.key === quickArea) || areas[0];
   try {
-    const t = await queueTarget(area.key, true);
-    editing = { path: t.path, section: QUEUE_SECTION, id: null, index: t.index, text: text || '', soon: true };
+    const t = await queueTarget(area.key, soon);
+    editing = { path: t.path, section: QUEUE_SECTION, id: null, index: t.index, text: text || '', soon };
   } catch (e) { handleErr(e); }
   saveDraft(); render(); focusEditor();
 }
@@ -735,7 +749,10 @@ async function startCapture() {
   document.documentElement.classList.add('capture');
   document.title = 'Add to WordDrill';
   const got = captureText(location.search);
-  history.replaceState(null, '', location.pathname + (DEMO ? '?demo' : ''));   // a reload never adds the text twice
+  // a reload never adds the text twice (WD Add keeps ?app=add, so it stays WD Add)
+  const keep = [DEMO ? 'demo' : '', APP_MODE ? 'app=add' : ''].filter(Boolean).join('&');
+  history.replaceState(null, '', location.pathname + (keep ? '?' + keep : ''));
+  if (APP_MODE) { document.title = 'WD Add'; $('.titlebar h1').textContent = 'WD Add'; }
   captureCut = !!(got && got.cut);
   // One capture engine at a time (another window, or the main app saving what one left behind)
   if (navigator.locks) await new Promise(res => navigator.locks.request(CAPTURE_LOCK, () => { res(); return new Promise(() => {}); }));
@@ -746,6 +763,7 @@ async function startCapture() {
   const incoming = joinCapture(kept, got ? got.text : '');
   if (!dbx.connected()) {
     if (incoming) store.set(CAPTURE_TEXT, incoming);   // kept for when this browser is signed in
+    if (APP_MODE) { show('login'); return; }   // WD Add signs in on its own (each Home Screen app has its own storage)
     $('#view').replaceChildren(h('section', { class: 'sec' }, h('h2', { text: 'Add to a queue' }),
       h('p', { text: 'Sign in to Dropbox in WordDrill in this browser first. (On the iPhone, Safari and the Home Screen app sign in separately.) The text below is kept and comes back the next time.' }),
       incoming ? h('pre', { class: 'captured', text: incoming }) : null,
@@ -785,7 +803,16 @@ function captureSettings() {
     h('p', { class: 'note', text: 'Not in Chrome’s PDF viewer or on chrome:// pages.' })];
   const step = (...kids) => h('li', {}, ...kids);
   const b = t => h('b', { text: t });
-  const phone = [h('h3', { text: 'iPhone (Share sheet)' }),
+  const addApp = new URL('add.html', location.href.split(/[?#]/)[0]).href + (DEMO ? '?demo' : '');
+  const phone = [h('h3', { text: 'iPhone: the WD Add app' }),
+    h('p', { class: 'note', text: 'A small separate app that only adds notes: copy text anywhere, tap WD Add on the Home Screen, tap 📋 Paste, pick the area and Save. The next note is ready at once. Works offline too (saves when online).' }),
+    h('ol', { class: 'steps' },
+      h('li', {}, 'Open ', h('a', { href: addApp, target: '_blank', rel: 'noopener' }, 'add.html'), ' in ', h('b', { text: 'Safari' }), ' (or copy the address below into Safari).'),
+      h('li', {}, 'Tap ', h('b', { text: 'Share → Add to Home Screen' }), '.'),
+      h('li', {}, 'Open ', h('b', { text: 'WD Add' }), ' and sign in to Dropbox once (each Home Screen app signs in on its own).')),
+    h('input', { class: 'capture-url', readonly: true, value: addApp, 'aria-label': 'WD Add address', onfocus: ev => ev.target.select() }),
+    h('div', { class: 'row' }, btn('Copy the address', () => copyText(addApp).then(ok => toast(ok ? 'Copied. Open it in Safari.' : 'Couldn’t copy.')), 'primary'))];
+  const shortcut = h('details', { class: 'shortcut' }, h('summary', { text: 'Or: a Share-sheet Shortcut (iPhone)' }),
     h('p', { class: 'note', text: 'Select text in any app → Share → Add to WordDrill. A WordDrill page opens in Safari with the text, to put it into a queue. Set up once in the Shortcuts app:' }),
     h('ol', { class: 'steps' },
       step('Tap +, and name the shortcut ', b('Add to WordDrill'), '.'),
@@ -795,9 +822,10 @@ function captureSettings() {
       step('Open WordDrill in ', b('Safari'), ' once and sign in to Dropbox there (the Home Screen app signs in separately).')),
     h('input', { class: 'capture-url', readonly: true, value: url, 'aria-label': 'Address for the Shortcut', onfocus: ev => ev.target.select() }),
     h('div', { class: 'row' }, btn('Copy the address', () => copyText(url).then(ok => toast(ok ? 'Copied. Paste it into Open URLs.' : 'Couldn’t copy.')), 'primary')),
-    h('p', { class: 'note', text: 'Saved cards reach the Home Screen app on its next sync. Safari can’t open the Home Screen app itself; swipe back when done.' })];
+    h('p', { class: 'note', text: 'Saved cards reach the Home Screen app on its next sync. Safari can’t open the Home Screen app itself; swipe back when done.' }));
+  computer.push(h('p', { class: 'note' }, 'Or install ', h('a', { href: addApp, target: '_blank', rel: 'noopener' }, 'WD Add'), ' as a small window of its own (the install icon in Chrome’s address bar).'));
   return h('section', { class: 'sec capture-settings' }, h('h2', { text: 'Add from any page' }),
-    ...(desktop() ? [computer, phone] : [phone, computer]).flat());
+    ...(desktop() ? [computer, phone] : [phone, computer]).flat(), shortcut);
 }
 // Today → Add to a queue: a note goes into the picked area's queue, soon or at the end, without leaving Today
 function quickQueue() {
@@ -1234,7 +1262,7 @@ function wire() {
   $('#loginRedirect').addEventListener('click', () => dbx.startLogin(true).catch(handleErr));
   $('#loginCode').addEventListener('click', () => dbx.startLogin(false).catch(handleErr));
   $('#codeSubmit').addEventListener('click', async () => {
-    try { await dbx.exchange($('#codeInput').value); start(); } catch (e) { toast(e.message, { error: true }); }
+    try { await dbx.exchange($('#codeInput').value); if (CAPTURE) location.reload(); else start(); } catch (e) { toast(e.message, { error: true }); }
   });
   if (navigator.standalone) $('#codeBox').open = true;
   let hiddenAt = 0;

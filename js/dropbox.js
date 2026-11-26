@@ -3,7 +3,7 @@
 
 export const DROPBOX_APP_KEY = 'g1pi38dpbaa0pek';   // public by design (PKCE)
 const TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token';
-export const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/, '');
+export const REDIRECT_URI = location.origin + location.pathname.replace(/(index|add)\.html$/, '');
 
 export class AuthError extends Error {
   constructor() { super('Please connect Dropbox again.'); }

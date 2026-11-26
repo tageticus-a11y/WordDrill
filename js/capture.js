@@ -16,6 +16,12 @@ export function captureText(search) {
   return { text, cut };
 }
 
+/** Which kind of page this is: capture (a bookmarklet window, a Shortcut page, or the WD Add app) and app (WD Add) */
+export function captureMode(search) {
+  const p = new URLSearchParams(search), app = p.get('app') === 'add';
+  return { capture: app || p.has(CAPTURE_PARAM), app };
+}
+
 /** The capture address without the text: <app>?add= (query and hash dropped; demo keeps ?demo). The iPhone
  * Shortcut appends the URL-encoded text to it. */
 export const captureUrl = (appUrl, demo) => appUrl.split(/[?#]/)[0] + (demo ? '?demo&' : '?') + CAPTURE_PARAM + '=';

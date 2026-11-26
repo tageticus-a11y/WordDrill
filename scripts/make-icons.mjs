@@ -81,7 +81,34 @@ function encodePng(pixels, size) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
 }
 
+// The WD Add icons: a "+" badge in the lower right (a blue disc with a white ring and a white plus), drawn
+// with 4×4 supersampling so the edges are smooth
+function withPlus(pixels, size) {
+  const out = Buffer.from(pixels);
+  const cx = size * 0.73, cy = size * 0.73, r = size * 0.23, ring = size * 0.025, arm = r * 0.55, bar = r * 0.15;
+  const paint = (i, rgb, a) => { for (let k = 0; k < 3; k++) out[i + k] = Math.round(out[i + k] * (1 - a) + rgb[k] * a); };
+  for (let y = Math.floor(cy - r - 1); y <= Math.ceil(cy + r + 1); y++) for (let x = Math.floor(cx - r - 1); x <= Math.ceil(cx + r + 1); x++) {
+    if (x < 0 || y < 0 || x >= size || y >= size) continue;
+    let disc = 0, inner = 0, plus = 0;
+    for (let sy = 0; sy < 4; sy++) for (let sx = 0; sx < 4; sx++) {
+      const px = x + (sx + 0.5) / 4 - cx, py = y + (sy + 0.5) / 4 - cy, d = Math.hypot(px, py);
+      if (d <= r) disc++;
+      if (d <= r - ring) inner++;
+      if ((Math.abs(px) <= arm && Math.abs(py) <= bar) || (Math.abs(py) <= arm && Math.abs(px) <= bar)) plus++;
+    }
+    const i = (y * size + x) * 3;
+    paint(i, [255, 255, 255], disc / 16);        // the white ring
+    paint(i, [42, 98, 184], inner / 16);         // the blue disc (--accent)
+    paint(i, [255, 255, 255], plus / 16);        // the plus
+  }
+  return out;
+}
+
 const src = decodePng(readFileSync(SOURCE));
 const out = process.argv[2] ? new URL('file:///' + process.argv[2].replace(/\\/g, '/') + '/') : new URL('../', import.meta.url);
-for (const s of [180, 192, 512]) writeFileSync(new URL('icon-' + s + '.png', out), encodePng(resize(src, s), s));
+for (const s of [180, 192, 512]) {
+  const px = resize(src, s);
+  writeFileSync(new URL('icon-' + s + '.png', out), encodePng(px, s));
+  writeFileSync(new URL('icon-add-' + s + '.png', out), encodePng(withPlus(px, s), s));
+}
 console.log('icons written from ' + src.w + '×' + src.h);

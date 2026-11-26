@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="WD Add">
+<meta name="theme-color" content="#0F1724">
+<link rel="manifest" href="add.webmanifest">
+<link rel="apple-touch-icon" href="icon-add-180.png">
+<title>WD Add</title>
+<script>
+  // WD Add: a second Home Screen app that only adds notes to a queue (WordDrill's capture mode, ?app=add).
+  // Opened from the Home Screen (or installed on a computer) it goes straight to the app. In a browser tab it
+  // stays here, so "Add to Home Screen" saves this page with its own name and icon.
+  (function () {
+    var installed = navigator.standalone || matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches;
+    var demo = /[?&]demo\b/.test(location.search) ? 'demo&' : '';
+    window.WD_ADD_URL = './?' + demo + 'app=add';
+    if (installed) location.replace(window.WD_ADD_URL);
+  })();
+</script>
+<style>
+  :root { color-scheme: light dark; --bg: #F4F7FC; --ink: #14213A; --muted: #5B6B85; --accent: #2A62B8; --on-accent: #fff; --rule: #D5DEEC; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0F1724; --ink: #E4ECF8; --muted: #93A3BD; --accent: #7AAEF7; --on-accent: #0A1424; --rule: #26344C; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: max(24px, env(safe-area-inset-top)) 16px 32px; }
+  .head { display: flex; align-items: center; gap: 14px; }
+  .head img { width: 64px; height: 64px; border-radius: 14px; }
+  h1 { font-size: 24px; margin: 0; color: var(--accent); }
+  ol { padding-left: 22px; }
+  li { margin: 6px 0; }
+  .note { color: var(--muted); font-size: 15px; }
+  a.button { display: inline-block; margin-top: 8px; padding: 10px 16px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+  <div class="head"><img src="icon-add-180.png" alt=""><h1>WD Add</h1></div>
+  <p>A small separate app that only adds notes to a WordDrill queue: copy text anywhere, tap the WD Add icon, tap 📋 Paste, pick the area and Save.</p>
+  <p><b>iPhone:</b></p>
+  <ol>
+    <li>Open this page in <b>Safari</b>.</li>
+    <li>Tap <b>Share</b> → <b>Add to Home Screen</b> → Add.</li>
+    <li>Open <b>WD Add</b> from the Home Screen and sign in to Dropbox once (each Home Screen app signs in on its own).</li>
+  </ol>
+  <p class="note"><b>Computer (Chrome):</b> use the install icon at the right of the address bar to get a small WD Add window.</p>
+  <a class="button" id="open" href="./?app=add">Open it here</a>
+</main>
+<script>document.getElementById('open').href = window.WD_ADD_URL;</script>
+</body>
+</html>
