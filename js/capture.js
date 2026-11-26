@@ -16,9 +16,13 @@ export function captureText(search) {
   return { text, cut };
 }
 
-/** The bookmarklet for the app at appUrl (query and hash are dropped; demo: keeps ?demo) */
+/** The capture address without the text: <app>?add= (query and hash dropped; demo keeps ?demo). The iPhone
+ * Shortcut appends the URL-encoded text to it. */
+export const captureUrl = (appUrl, demo) => appUrl.split(/[?#]/)[0] + (demo ? '?demo&' : '?') + CAPTURE_PARAM + '=';
+
+/** The bookmarklet for the app at appUrl */
 export function bookmarklet(appUrl, demo) {
-  const target = appUrl.split(/[?#]/)[0] + (demo ? '?demo&' : '?') + CAPTURE_PARAM + '=';
+  const target = captureUrl(appUrl, demo);
   // the selection, or the selected part of a text box (getSelection doesn't see inside those)
   return 'javascript:(()=>{const a=document.activeElement;' +
     'const s=a&&/^(TEXTAREA|INPUT)$/.test(a.tagName)&&a.selectionEnd>a.selectionStart?a.value.slice(a.selectionStart,a.selectionEnd):String(getSelection());' +

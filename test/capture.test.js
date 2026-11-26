@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { captureText, bookmarklet, joinCapture, CAPTURE_MAX } from '../js/capture.js';
+import { captureText, captureUrl, bookmarklet, joinCapture, CAPTURE_MAX } from '../js/capture.js';
 import { splitParts } from '../js/ops.js';
 
 const enc = s => '?add=' + encodeURIComponent(s);
@@ -41,4 +41,14 @@ test('text arriving while an unsaved capture is open is added after a ― line, 
   assert.equal(joinCapture('old\n', ''), 'old\n');
   const j = joinCapture('old one\n', 'new one');
   assert.deepEqual(splitParts(j, 'marks'), ['old one', 'new one']);
+});
+
+test('the address for the iPhone Shortcut: the app with ?add=, and the encoded text comes back exactly', () => {
+  assert.equal(captureUrl('https://example.org/WordDrill/?x=1#top'), 'https://example.org/WordDrill/?add=');
+  assert.equal(captureUrl('http://localhost:8000/?demo', true), 'http://localhost:8000/?demo&add=');
+  assert.ok(bookmarklet('https://example.org/WordDrill/').includes(JSON.stringify(captureUrl('https://example.org/WordDrill/'))));
+  // the Shortcut: Open URLs with the address + URL Encode(text)
+  const text = 'բարեւ & привет\nC++ #1 50% a=b?c';
+  const url = new URL(captureUrl('https://example.org/WordDrill/') + encodeURIComponent(text));
+  assert.deepEqual(captureText(url.search), { text, cut: false });
 });

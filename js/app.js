@@ -14,13 +14,13 @@ import {
 } from './ops.js';
 import { queueSettings, queueFiles, isQueueFile, queueNumber, queuePath, appendTarget, soonTarget, QUEUE_SECTION } from './queue.js';
 import { createVersions } from './versions.js';
-import { captureText, bookmarklet, joinCapture, CAPTURE_LOCK } from './capture.js';
+import { captureText, captureUrl, bookmarklet, joinCapture, CAPTURE_LOCK } from './capture.js';
 import { mountTimer } from './timer-ui.js';
 import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, DEFAULT_SHORTCUT } from './timer.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '33';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '34';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -55,87 +55,7 @@ let archiveKey = null, archiveMonth = null, archiveQuery = '';
 let prepArea = store.get('wd.prepArea');      // Preparation: the area sub-tab shown
 let prepView = store.get('wd.prepView') === 'queue' ? 'queue' : 'prepared';   // Preparation: Prepared or Queue
 const queueAt = {};                          // area key → the queue file shown (front by default)
-let quickArea = store.get('wd.quickArea');   // How to add several cards at once (above an editor for new queue cards)
-const manyHint = () => h('p', { class: 'note', text: 'One card: type and Save. Several: one per line, then ✂ Save line by line; or put ― lines between them (the ― button), then ✂ Save at ― lines.' });
-const queueName = p => { const a = sectionsList(engine.state()).find(x => x.key === p.split('/')[1]); return (a ? a.name + ' ' : '') + 'queue'; };
-/* ============ Capture window ============ */
-let captureCut = false, captureReady = false;
-// Saves at once; when everything is in Dropbox, says so and closes the window (the bookmarklet opened it)
-async function captureSave(message) {
-  updateStatus('Saving…');
-  try { await engine.flush(); } catch (e) { handleErr(e); }
-  updateStatus();
-  render();
-  if (engine.pending()) return;   // the view offers Try again
-  toast(message || 'Saved.');
-  setTimeout(() => { window.close(); toast('Saved. You can close this window.'); }, 1500);
-}
-function captureView() {
-  const out = [];
-  if (captureCut) out.push(h('p', { class: 'low', text: 'The selection was very long, so only its start is here.' }));
-  if (engine.pending()) out.push(h('div', { class: 'reminder' },
-    h('span', { text: 'Not saved to Dropbox yet (' + plural(engine.pending(), 'change') + '). It is kept here until it is.' }),
-    btn('Try again', () => captureSave(), 'primary')));
-  if (!captureReady) out.push(h('p', { class: 'empty', text: 'Loading…' }));
-  else out.push(quickQueue());
-  return out;
-}
-async function startCapture() {
-  document.documentElement.classList.add('capture');
-  document.title = 'Add to WordDrill';
-  const got = captureText(location.search);
-  history.replaceState(null, '', location.pathname + (DEMO ? '?demo' : ''));   // a reload never adds the text twice
-  captureCut = !!(got && got.cut);
-  // One capture engine at a time (another window, or the main app saving what one left behind)
-  if (navigator.locks) await new Promise(res => navigator.locks.request(CAPTURE_LOCK, () => { res(); return new Promise(() => {}); }));
-  engine = createEngine({ api: dbx.api, storage: store, key: CAPTURE_KEY });
-  show('app');
-  if (!dbx.connected()) {
-    const text = got ? got.text : '';
-    $('#view').replaceChildren(h('section', { class: 'sec' }, h('h2', { text: 'Add to a queue' }),
-      h('p', { text: 'Sign in to Dropbox in WordDrill first (open WordDrill in this browser), then try again.' }),
-      text ? h('pre', { class: 'captured', text }) : null,
-      h('div', { class: 'row' }, text ? btn('Copy the text', () => copyText(text).then(ok => toast(ok ? 'Copied.' : 'Couldn’t copy.')), 'primary') : null,
-        btn('Close', () => window.close()))));
-    return;
-  }
-  render();
-  await sync();   // the areas and queue settings (and saves what an earlier window left)
-  // a note left open by an earlier window keeps its text; the new selection goes after it
-  if (editing && !editing.id && isQueueFile(editing.path)) {
-    if (got && got.text) editing = { ...editing, text: joinCapture(editing.text, got.text) };
-  } else {
-    const areas = activeSections(engine.state());
-    const area = areas.find(a => a.key === quickArea) || areas[0];
-    try {
-      const t = await queueTarget(area.key, true);
-      editing = { path: t.path, section: QUEUE_SECTION, id: null, index: t.index, text: got ? got.text : '', soon: true };
-    } catch (e) { handleErr(e); }
-  }
-  captureReady = true;
-  saveDraft(); render(); focusEditor();
-}
-// Main app: saves what a capture window couldn't (it closed before Dropbox answered), unless one is open now
-async function flushCaptureLeftovers() {
-  const d = store.get(CAPTURE_KEY);
-  if (!d || !d.ops || !d.ops.length || !navigator.locks) return;
-  try {
-    await navigator.locks.request(CAPTURE_LOCK, { ifAvailable: true }, async lock => {
-      if (lock) await createEngine({ api: dbx.api, storage: store, key: CAPTURE_KEY }).flush();
-    });
-  } catch (e) { console.error(e); }   // tried again on the next sync
-}
-// Settings → Add from any page: the bookmarklet
-function captureSettings() {
-  const code = bookmarklet(location.href, DEMO);
-  return h('section', { class: 'sec' }, h('h2', { text: 'Add from any page' }),
-    h('p', { class: 'note', text: 'In Chrome on a computer: drag this link to the bookmarks bar. Then select text on any page and click it: a small WordDrill window opens with the text, to put it into a queue (soon or at the end).' }),
-    h('div', { class: 'row' },
-      h('a', { class: 'bookmarklet', href: code, title: 'Drag me to the bookmarks bar', onclick: ev => { ev.preventDefault(); toast('Drag this link to the bookmarks bar.'); } }, '+ WordDrill'),
-      btn('Copy the code', () => copyText(code).then(ok => toast(ok ? 'Copied. Paste it as the address (URL) of a new bookmark.' : 'Couldn’t copy.')), 'link')),
-    h('p', { class: 'note', text: 'Not in Chrome’s PDF viewer or on chrome:// pages.' }));
-}
-// Today → Add to a queue: the area key picked
+let quickArea = store.get('wd.quickArea');   // Today → Add to a queue: the area key picked
 let editing = store.get(DRAFT_KEY);         // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
@@ -768,6 +688,116 @@ async function queueTarget(key, soon) {
     // Offline with the files not on this device: soon → into the front file (about the right place), end → the last file
     return soon ? { path: paths[0] || queuePath(key, 1), index: set.soonAfter } : { path: paths[paths.length - 1] || queuePath(key, 1), index: 1e9 };
   }
+}
+// How to add several cards at once (above an editor for new queue cards)
+const manyHint = () => h('p', { class: 'note', text: 'One card: type and Save. Several: one per line, then ✂ Save line by line; or put ― lines between them (the ― button), then ✂ Save at ― lines.' });
+const queueName = p => { const a = sectionsList(engine.state()).find(x => x.key === p.split('/')[1]); return (a ? a.name + ' ' : '') + 'queue'; };
+/* ============ Capture window ============ */
+let captureCut = false, captureReady = false, captureDone = null;
+const CAPTURE_TEXT = 'wd.captureText';   // text that came in while not signed in, kept for the next time
+// Saves at once. When everything is in Dropbox: the bookmarklet's window closes; a page opened by the iPhone
+// Shortcut (Safari can't close it) says it is saved and offers another note.
+async function captureSave(message) {
+  updateStatus('Saving…');
+  try { await engine.flush(); } catch (e) { handleErr(e); }
+  updateStatus();
+  if (engine.pending()) { render(); return; }   // the view offers Try again
+  captureDone = message || 'Saved.';
+  render();
+  if (window.opener) { toast(captureDone); setTimeout(() => window.close(), 1500); }
+}
+// A new note at the soon place of the last area picked (text: what came in)
+async function newCaptureNote(text) {
+  const areas = activeSections(engine.state());
+  const area = areas.find(a => a.key === quickArea) || areas[0];
+  try {
+    const t = await queueTarget(area.key, true);
+    editing = { path: t.path, section: QUEUE_SECTION, id: null, index: t.index, text: text || '', soon: true };
+  } catch (e) { handleErr(e); }
+  saveDraft(); render(); focusEditor();
+}
+function captureView() {
+  const out = [];
+  if (captureCut) out.push(h('p', { class: 'low', text: 'The selection was very long, so only its start is here.' }));
+  if (engine.pending()) out.push(h('div', { class: 'reminder' },
+    h('span', { text: 'Not saved to Dropbox yet (' + plural(engine.pending(), 'change') + '). It is kept here until it is.' }),
+    btn('Try again', () => captureSave(), 'primary')));
+  if (!captureReady) out.push(h('p', { class: 'empty', text: 'Loading…' }));
+  else if (captureDone && !editing) out.push(h('section', { class: 'sec capture-done' },
+    h('h2', { text: '✓ Saved' }),
+    h('p', { text: captureDone }),
+    h('p', { class: 'note', text: 'You can go back to where you were: swipe back, or tap ◀ with the app’s name in the top-left corner.' }),
+    btn('+ Add another', () => { captureDone = null; newCaptureNote(''); }, 'add')));
+  else out.push(quickQueue());
+  return out;
+}
+async function startCapture() {
+  document.documentElement.classList.add('capture');
+  document.title = 'Add to WordDrill';
+  const got = captureText(location.search);
+  history.replaceState(null, '', location.pathname + (DEMO ? '?demo' : ''));   // a reload never adds the text twice
+  captureCut = !!(got && got.cut);
+  // One capture engine at a time (another window, or the main app saving what one left behind)
+  if (navigator.locks) await new Promise(res => navigator.locks.request(CAPTURE_LOCK, () => { res(); return new Promise(() => {}); }));
+  engine = createEngine({ api: dbx.api, storage: store, key: CAPTURE_KEY });
+  show('app');
+  // text that came in earlier while not signed in goes first
+  const kept = store.get(CAPTURE_TEXT) || '';
+  const incoming = joinCapture(kept, got ? got.text : '');
+  if (!dbx.connected()) {
+    if (incoming) store.set(CAPTURE_TEXT, incoming);   // kept for when this browser is signed in
+    $('#view').replaceChildren(h('section', { class: 'sec' }, h('h2', { text: 'Add to a queue' }),
+      h('p', { text: 'Sign in to Dropbox in WordDrill in this browser first. (On the iPhone, Safari and the Home Screen app sign in separately.) The text below is kept and comes back the next time.' }),
+      incoming ? h('pre', { class: 'captured', text: incoming }) : null,
+      h('div', { class: 'row' },
+        h('a', { class: 'button primary', href: location.pathname + (DEMO ? '?demo' : '') }, 'Open WordDrill to sign in'),
+        incoming ? btn('Copy the text', () => copyText(incoming).then(ok => toast(ok ? 'Copied.' : 'Couldn’t copy.'))) : null)));
+    return;
+  }
+  render();
+  await sync();   // the areas and queue settings (and saves what an earlier window left)
+  captureReady = true;
+  // a note left open by an earlier window keeps its text; the new selection goes after it
+  if (editing && !editing.id && isQueueFile(editing.path)) {
+    if (incoming) editing = { ...editing, text: joinCapture(editing.text, incoming) };
+    saveDraft(); render(); focusEditor();
+  } else await newCaptureNote(incoming);
+  if (editing) store.del(CAPTURE_TEXT);   // now in the draft
+}
+// Main app: saves what a capture window couldn't (it closed before Dropbox answered), unless one is open now
+async function flushCaptureLeftovers() {
+  const d = store.get(CAPTURE_KEY);
+  if (!d || !d.ops || !d.ops.length || !navigator.locks) return;
+  try {
+    await navigator.locks.request(CAPTURE_LOCK, { ifAvailable: true }, async lock => {
+      if (lock) await createEngine({ api: dbx.api, storage: store, key: CAPTURE_KEY }).flush();
+    });
+  } catch (e) { console.error(e); }   // tried again on the next sync
+}
+// Settings → Add from any page: the bookmarklet (computer) and the Share-sheet Shortcut (iPhone)
+function captureSettings() {
+  const code = bookmarklet(location.href, DEMO), url = captureUrl(location.href, DEMO);
+  const computer = [h('h3', { text: 'Computer (Chrome)' }),
+    h('p', { class: 'note', text: 'Drag this link to the bookmarks bar. Then select text on any page and click it: a small WordDrill window opens with the text, to put it into a queue (soon or at the end).' }),
+    h('div', { class: 'row' },
+      h('a', { class: 'bookmarklet', href: code, title: 'Drag me to the bookmarks bar', onclick: ev => { ev.preventDefault(); toast('Drag this link to the bookmarks bar.'); } }, '+ WordDrill'),
+      btn('Copy the code', () => copyText(code).then(ok => toast(ok ? 'Copied. Paste it as the address (URL) of a new bookmark.' : 'Couldn’t copy.')), 'link')),
+    h('p', { class: 'note', text: 'Not in Chrome’s PDF viewer or on chrome:// pages.' })];
+  const step = (...kids) => h('li', {}, ...kids);
+  const b = t => h('b', { text: t });
+  const phone = [h('h3', { text: 'iPhone (Share sheet)' }),
+    h('p', { class: 'note', text: 'Select text in any app → Share → Add to WordDrill. A WordDrill page opens in Safari with the text, to put it into a queue. Set up once in the Shortcuts app:' }),
+    h('ol', { class: 'steps' },
+      step('Tap +, and name the shortcut ', b('Add to WordDrill'), '.'),
+      step('In its ⓘ details turn on ', b('Show in Share Sheet'), ', and let it receive only ', b('Text'), '.'),
+      step('Add the action ', b('URL Encode'), ' (it encodes the Shortcut Input).'),
+      step('Add the action ', b('Open URLs'), ': paste the address below, then put the variable ', b('URL Encoded Text'), ' right after ', h('code', { text: 'add=' }), '.'),
+      step('Open WordDrill in ', b('Safari'), ' once and sign in to Dropbox there (the Home Screen app signs in separately).')),
+    h('input', { class: 'capture-url', readonly: true, value: url, 'aria-label': 'Address for the Shortcut', onfocus: ev => ev.target.select() }),
+    h('div', { class: 'row' }, btn('Copy the address', () => copyText(url).then(ok => toast(ok ? 'Copied. Paste it into Open URLs.' : 'Couldn’t copy.')), 'primary')),
+    h('p', { class: 'note', text: 'Saved cards reach the Home Screen app on its next sync. Safari can’t open the Home Screen app itself; swipe back when done.' })];
+  return h('section', { class: 'sec capture-settings' }, h('h2', { text: 'Add from any page' }),
+    ...(desktop() ? [computer, phone] : [phone, computer]).flat());
 }
 // Today → Add to a queue: a note goes into the picked area's queue, soon or at the end, without leaving Today
 function quickQueue() {
