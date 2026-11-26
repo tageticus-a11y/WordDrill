@@ -117,6 +117,15 @@
   .seg button + button { border-left: 1px solid var(--rule); }
   .seg button.on { background: var(--tint); color: var(--ink); }
   .queue-add { margin-top: 10px; }
+  /* Today: how long Preparation lasts per area */
+  .cover { margin-left: 8px; font-size: 14px; font-weight: 500; color: var(--muted); }
+  .cover.low { color: var(--alert); }
+  /* Settings: the bookmarklet link (dragged to the bookmarks bar) */
+  a.bookmarklet { display: inline-block; padding: 6px 14px; border: 1px dashed var(--rule); border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 600; cursor: grab; }
+  pre.captured { white-space: pre-wrap; background: var(--tint); padding: 10px; border-radius: 10px; max-height: 40vh; overflow: auto; }
+  /* The capture window (?add=…): only the quick add */
+  html.capture nav, html.capture #timerBtn, html.capture #timerPanel, html.capture .titlebar [data-tab=settings] { display: none !important; }
+  html.capture .quick-queue { margin-top: 4px; }
   .quick-queue .seg { margin-right: 8px; max-width: 100%; overflow-x: auto; }
   .queue-add .add { flex: 1; margin: 0; }
   .queue-bar { justify-content: space-between; margin-top: 10px; }

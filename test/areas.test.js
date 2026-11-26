@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseDoc, serializeDoc, allCards } from '../js/format.js';
 import {
   applyOp, applyStateOp, opTargets, CURRENT, PREPARED, DEFAULT_SECTIONS, sectionsList, activeSections, targetsOf,
-  addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan, renameOp, splitPlan, splitAllPlan, splitParts, mergePlan, archiveOp, JOIN
+  addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan, renameOp, splitPlan, splitAllPlan, coverage, coverageText, splitParts, mergePlan, archiveOp, JOIN
 } from '../js/ops.js';
 
 const WEEK = 'week/1-mon.md';
@@ -186,4 +186,15 @@ test('split a card into many: the parts go right below in order with the same me
   const [a, b] = f[CURRENT].sections[0].cards;
   const m = run(mergePlan(CURRENT, 'Armenian', a, b, 1).ops, { [CURRENT]: f[CURRENT] }).files[CURRENT].sections[0].cards[0];
   assert.deepEqual(splitParts(m.body, 'marks'), ['alpha', 'beta']);
+});
+
+test('coverage: days and percent of a day that Preparation lasts (P / T)', () => {
+  assert.deepEqual(coverage(5, 2), { days: 2.5, percent: 250 });
+  assert.deepEqual(coverage(0, 2), { days: 0, percent: 0 });
+  assert.equal(coverage(3, 0), null);
+  assert.equal(coverage(3, undefined), null);
+  assert.deepEqual(coverage(1, 3), { days: 0.3, percent: 33 });
+  assert.equal(coverageText(coverage(5, 2)), '(2.5 days, 250%)');
+  assert.equal(coverageText(coverage(2, 2)), '(1 day, 100%)');
+  assert.equal(coverageText(coverage(0, 1)), '(0 days, 0%)');
 });

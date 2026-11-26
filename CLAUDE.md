@@ -18,6 +18,7 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
 
 ## Workflow of the user
 - **Today:** one section per **area** with daily targets (Armenian 2, English 2, General 1 by default). The targets are stored in `state.json` as `targets` (by area name) and edited in Settings.
+  - **Coverage** (v32, `coverage` / `coverageText` in ops.js, `coverView` in app.js): each heading shows how long Preparation lasts, P prepared / T a day: `English 2 / 2 (2.5 days, 250%)` (days = P/T with one decimal, percent = P/T×100; the user chose this formula), red under 1 day; none without a target. The hidden-list note shows it too. For seeing which area is ready for the weekend.
 - **Areas** (Settings → "Areas and cards per day"; state.json `sections` = [{key, name, removed?}], absent = the three defaults, `sectionsList` / `activeSections` in ops.js). The order there is the order everywhere.
   - The **key** never changes; it names the archive folder (`archive/<key>/`), so `archiveOp` gets the key from the list.
   - **Rename** (`renameSectionPlan`): a `rename` op rewrites the `## Name` headings in Today, Prepared and the 7 weekday files (merging into the new heading if it already exists; a missing file is not created), and the target moves to the new name. Archive files keep their old headings (history); the archive view groups by key. A name already used by another area (removed too) or by a heading that holds cards is refused.
@@ -49,6 +50,8 @@ A personal PWA for memorizing words, used in desktop Chrome and as an iPhone Hom
   - State in localStorage `wd.timer` = {total, startAt, elapsed} with wall-clock times: survives reloads and tab switches. Logic in `js/timer.js` (pure, tested), UI in `js/timer-ui.js`.
 - **Preparation** (`prepared.md`; "Prepared" below means this tab): the user prepares the next cards, not in order as with Today. It works like Today (add, edit, up/down, delete) but shows **one area at a time**: a row of sub-tabs (`.subtabs`, one per area of `sectionsOf`, i.e. Settings order plus extra headings holding cards), each with its card count. A sub-tab is red when the area holds fewer cards than its daily target (not enough for tomorrow), with a note above the list. The chosen sub-tab is kept in localStorage `wd.prepArea`; an open editor in Preparation picks its area; "Open Preparation" on the low banner opens the first short area.
 - **Today → Add to a queue** (`quickQueue` in app.js, at the bottom of Today in both states): area chips (localStorage `wd.quickArea`), **+ Soon** / **+ To the end** open the editor right there (same `queueTarget` as the Queue view; `editing.soon` remembers which). While it is open, the area chips and the Soon / At the end switch move the note to the new place with its text (`.keep-edit` buttons don't autosave).
+- **Capture from any page** (v32, bookmarklet; `js/capture.js`, `startCapture` / `captureView` / `captureSettings` in app.js): Settings → "Add from any page" has a link to drag to the Chrome bookmarks bar (`bookmarklet(appUrl, demo)`: the selection, or the selected part of a text box, → `window.open(<app>?add=<text>, "worddrill-add", popup)`). The window (`CAPTURE`, html class `capture`) shows only the quick add with the text in the editor (review, then Save; ✂ Save line by line works); the URL is cleaned at once so a reload never adds twice; it saves at once (`captureSave`) and closes itself when Dropbox has it, else shows Try again. Cancel closes it; no autosave there. Not signed in: says so, with Copy.
+  - **It is a separate device:** own engine key `wd.capture` (demo `demo.capture`) and draft `wd.captureDraft`, never `wd.data` / `wd.draft`: two windows on one engine key would overwrite each other's pending ops (the engine saves its whole state). Dropbox revs and op replay merge them, as between phones. Its engine is made only once it holds the Web Lock `worddrill-capture`; the main app's `sync` first flushes ops a closed capture window left (`flushCaptureLeftovers`, lock `ifAvailable`). A note left open gets the next selection after a `---` line (`joinCapture`). Text over 20,000 characters is cut, with a note.
 - **Queue** (Preparation → area sub-tab → the **Prepared N | Queue** switch, localStorage `wd.prepView`; logic in `js/queue.js`):
   - **Files:** `queue/<area-key>/0001.md`, `0002.md` … (4 digits, by key, so a rename never touches them), file format v1 **without a heading** (all cards in section `''`, `QUEUE_SECTION`). The front of the queue is the lowest number.
   - **Settings → Queue** (state.json `queue` = {fileSize, soonAfter}, `queueSettings`, both 50 by default, 5–500): cards per file and the "soon" place.
@@ -152,6 +155,7 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - `hdr()` escapes non-ASCII characters in `Dropbox-API-Arg`. Armenian paths would break without it.
   - The app key is in `DROPBOX_APP_KEY`; it is public by design.
 - `queue.js` (pure): `queueSettings`, `queuePath` / `queueFiles` / `isQueueFile` / `queueNumber`, `appendTarget`, `soonTarget`, `splitBlocks`, `chunk`.
+- `capture.js` (pure): `captureText`, `bookmarklet`, `joinCapture`, `CAPTURE_LOCK`.
 - `recall.js` (pure): `recallFor`, `checkTypedFor`, `typedTexts`, `promptOf`, `buildCheckText`, `DEFAULT_CHECK_PROMPT`, `copyShortcutOf`.
 - `timer.js` (pure): `timerState`, `timerView`, `startTimer` / `pauseTimer` / `resetTimer` / `setTotal`, `cycleEnds`, `MILESTONES` / `milestoneCycles` / `milestonesPassed` / `partOf`, `timerSettings`, `shortcutOf` / `matchesShortcut` / `shortcutLabel`. `timer-ui.js`: `mountTimer({button, panel, store, settings})` → `{refresh}`.
 - `demo.js`: `?demo` in the URL uses a fake Dropbox kept in localStorage (`demo.files`, `demo.data`). Use it for UI testing without touching real data.
@@ -182,7 +186,7 @@ card body: free Markdown (bold, italic, ~underline~, > quotes, lists, ``` box ``
   - `test/sync.test.js`: an in-memory fake Dropbox with revs and injected failures (network errors, a lost reply after a write, two devices).
   - `test/release.test.js`: checks the service worker list and the matching versions.
 - **Manual UI check:**
-  1. Serve the folder on `http://localhost:8000/`, for example with `python -m http.server 8000`.
+  1. Serve the folder on `http://localhost:8000/` with a server that sends `.js` as `text/javascript` (on this PC `python -m http.server` sends text/plain and the modules don't load; a few lines of Node `http` do).
   2. Open `/?demo`.
   3. Headless Edge is at `C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe` and can be driven over CDP; Chrome isn't installed.
 - **Real Dropbox locally:** works through `http://localhost:8000/`, which is registered as a redirect URI. It touches real data.

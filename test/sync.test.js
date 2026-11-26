@@ -357,3 +357,43 @@ test('a run of ops on one file is uploaded once; a move in between keeps the ord
   assert.deepEqual(cards(db.text(Q)).slice(0, 3).map(c => c.body), ['word 0 edited', 'word 2 edited', 'word 4']);
   assert.deepEqual(cards(db.text(PREPARED)).map(c => c.body), ['word 1']);
 });
+
+test('a capture window is a separate engine on the same storage: neither overwrites the other, both changes reach Dropbox', async () => {
+  const db = fakeDropbox(), storage = memStorage();
+  const Q = 'queue/english/0001.md';
+  db.put(Q, '<!-- worddrill v1 -->\n\n<!-- card id=n1 added=2026-11-20 -->\nnote one\n');
+  const main = createEngine({ api: db.api, storage, key: 'wd.data' });
+  await main.sync(CORE.concat(Q));
+  // the main tab has a change waiting (e.g. offline for a moment)
+  main.add(editOp(Q, '', allCards(main.doc(Q))[0], 'note one edited'));
+  // the capture window: its own key, adds to the same file and saves at once
+  const cap = createEngine({ api: db.api, storage, key: 'wd.capture' });
+  await cap.sync(['state.json']);
+  await cap.load(Q);
+  const added = cap.add(addOp(Q, '', 'captured', DAY));
+  await cap.flush();
+  assert.equal(cap.pending(), 0);
+  // the main tab's saved changes are untouched by the capture window
+  assert.equal(storage.get('wd.data').ops.length, 1);
+  assert.equal(main.pending(), 1);
+  await main.sync(CORE);
+  assert.deepEqual(cards(db.text(Q)).map(c => c.body), ['note one edited', 'captured']);
+  assert.ok(ids(db.text(Q)).includes(added.card.id));
+  assert.equal(allCards(main.doc(Q)).length, 2);
+});
+
+test('capture changes left unsaved (the window closed) are saved later by a new engine on the same key', async () => {
+  const db = fakeDropbox(), storage = memStorage();
+  const Q = 'queue/english/0001.md';
+  const cap = createEngine({ api: db.api, storage, key: 'wd.capture' });
+  await cap.sync(['state.json']);
+  db.fail.push({ on: 'upload', kind: 'network', path: Q });
+  cap.add(addOp(Q, '', 'left behind', DAY));
+  await assert.rejects(cap.flush());
+  // later: the main app (or the next capture window) flushes what is left
+  const later = createEngine({ api: db.api, storage, key: 'wd.capture' });
+  assert.equal(later.pending(), 1);
+  await later.flush();
+  assert.equal(later.pending(), 0);
+  assert.deepEqual(cards(db.text(Q)).map(c => c.body), ['left behind']);
+});

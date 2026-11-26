@@ -296,6 +296,13 @@ export function preparedShortage(prepared, targets) {
     .map(([section, need]) => ({ section, have: cardsIn(prepared, section).length, need }))
     .filter(x => x.have < x.need);
 }
+/** How long Preparation lasts for an area: P cards prepared / T a day → {days: P/T (one decimal), percent: P/T×100}; null without a target */
+export function coverage(prepared, target) {
+  if (!(target > 0)) return null;
+  const r = prepared / target;
+  return { days: Math.round(r * 10) / 10, percent: Math.round(r * 100) };
+}
+export const coverageText = c => '(' + c.days + (c.days === 1 ? ' day' : ' days') + ', ' + c.percent + '%)';
 
 /** Files an op writes, in write order */
 export const opTargets = op =>

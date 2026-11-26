@@ -10,16 +10,17 @@ import {
   CURRENT, STATE, PREPARED, addOp, editOp, deleteOp, restoreOp, orderOp, archiveOp, moveOp, stateOp,
   findCard, targetsOf, rememberPlan, toTodayOp, toPreparedOp, preparedShortage, backToTodayOp, sectionOp,
   sectionsList, activeSections, sectionKey, addSectionPlan, renameSectionPlan, removeSectionPlan, moveSectionPlan,
-  splitPlan, splitAllPlan, splitParts, mergePlan, queueAddOp, queueToPreparedPlan, queueToEndPlan, forgotPlan
+  splitPlan, splitAllPlan, splitParts, coverage, coverageText, mergePlan, queueAddOp, queueToPreparedPlan, queueToEndPlan, forgotPlan
 } from './ops.js';
 import { queueSettings, queueFiles, isQueueFile, queueNumber, queuePath, appendTarget, soonTarget, QUEUE_SECTION } from './queue.js';
 import { createVersions } from './versions.js';
+import { captureText, bookmarklet, joinCapture, CAPTURE_LOCK } from './capture.js';
 import { mountTimer } from './timer-ui.js';
 import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, DEFAULT_SHORTCUT } from './timer.js';
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '31';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '32';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -39,7 +40,13 @@ const versions = createVersions({
   set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 });
 const dbx = DEMO ? createDemoDropbox(store) : createDropbox(store);
-const engine = createEngine({ api: dbx.api, storage: store, key: DEMO ? 'demo.data' : 'wd.data' });
+// Capture window (?add=…, opened by the bookmarklet in Settings): works like a separate device with its own
+// storage keys, so it never overwrites the pending changes of a WordDrill tab that is open at the same time.
+// Its engine is made once it holds the capture lock (see startCapture).
+const CAPTURE = new URLSearchParams(location.search).has('add');
+const CAPTURE_KEY = DEMO ? 'demo.capture' : 'wd.capture';
+const DRAFT_KEY = CAPTURE ? 'wd.captureDraft' : 'wd.draft';
+let engine = CAPTURE ? null : createEngine({ api: dbx.api, storage: store, key: DEMO ? 'demo.data' : 'wd.data' });
 
 /* ============ UI state ============ */
 let tab = store.get('wd.tab') || 'today';
@@ -50,8 +57,86 @@ let prepView = store.get('wd.prepView') === 'queue' ? 'queue' : 'prepared';   //
 const queueAt = {};                          // area key → the queue file shown (front by default)
 let quickArea = store.get('wd.quickArea');   // How to add several cards at once (above an editor for new queue cards)
 const manyHint = () => h('p', { class: 'note', text: 'One card: type and Save. Several: one per line, then ✂ Save line by line; or put ― lines between them (the ― button), then ✂ Save at ― lines.' });
+const queueName = p => { const a = sectionsList(engine.state()).find(x => x.key === p.split('/')[1]); return (a ? a.name + ' ' : '') + 'queue'; };
+/* ============ Capture window ============ */
+let captureCut = false, captureReady = false;
+// Saves at once; when everything is in Dropbox, says so and closes the window (the bookmarklet opened it)
+async function captureSave(message) {
+  updateStatus('Saving…');
+  try { await engine.flush(); } catch (e) { handleErr(e); }
+  updateStatus();
+  render();
+  if (engine.pending()) return;   // the view offers Try again
+  toast(message || 'Saved.');
+  setTimeout(() => { window.close(); toast('Saved. You can close this window.'); }, 1500);
+}
+function captureView() {
+  const out = [];
+  if (captureCut) out.push(h('p', { class: 'low', text: 'The selection was very long, so only its start is here.' }));
+  if (engine.pending()) out.push(h('div', { class: 'reminder' },
+    h('span', { text: 'Not saved to Dropbox yet (' + plural(engine.pending(), 'change') + '). It is kept here until it is.' }),
+    btn('Try again', () => captureSave(), 'primary')));
+  if (!captureReady) out.push(h('p', { class: 'empty', text: 'Loading…' }));
+  else out.push(quickQueue());
+  return out;
+}
+async function startCapture() {
+  document.documentElement.classList.add('capture');
+  document.title = 'Add to WordDrill';
+  const got = captureText(location.search);
+  history.replaceState(null, '', location.pathname + (DEMO ? '?demo' : ''));   // a reload never adds the text twice
+  captureCut = !!(got && got.cut);
+  // One capture engine at a time (another window, or the main app saving what one left behind)
+  if (navigator.locks) await new Promise(res => navigator.locks.request(CAPTURE_LOCK, () => { res(); return new Promise(() => {}); }));
+  engine = createEngine({ api: dbx.api, storage: store, key: CAPTURE_KEY });
+  show('app');
+  if (!dbx.connected()) {
+    const text = got ? got.text : '';
+    $('#view').replaceChildren(h('section', { class: 'sec' }, h('h2', { text: 'Add to a queue' }),
+      h('p', { text: 'Sign in to Dropbox in WordDrill first (open WordDrill in this browser), then try again.' }),
+      text ? h('pre', { class: 'captured', text }) : null,
+      h('div', { class: 'row' }, text ? btn('Copy the text', () => copyText(text).then(ok => toast(ok ? 'Copied.' : 'Couldn’t copy.')), 'primary') : null,
+        btn('Close', () => window.close()))));
+    return;
+  }
+  render();
+  await sync();   // the areas and queue settings (and saves what an earlier window left)
+  // a note left open by an earlier window keeps its text; the new selection goes after it
+  if (editing && !editing.id && isQueueFile(editing.path)) {
+    if (got && got.text) editing = { ...editing, text: joinCapture(editing.text, got.text) };
+  } else {
+    const areas = activeSections(engine.state());
+    const area = areas.find(a => a.key === quickArea) || areas[0];
+    try {
+      const t = await queueTarget(area.key, true);
+      editing = { path: t.path, section: QUEUE_SECTION, id: null, index: t.index, text: got ? got.text : '', soon: true };
+    } catch (e) { handleErr(e); }
+  }
+  captureReady = true;
+  saveDraft(); render(); focusEditor();
+}
+// Main app: saves what a capture window couldn't (it closed before Dropbox answered), unless one is open now
+async function flushCaptureLeftovers() {
+  const d = store.get(CAPTURE_KEY);
+  if (!d || !d.ops || !d.ops.length || !navigator.locks) return;
+  try {
+    await navigator.locks.request(CAPTURE_LOCK, { ifAvailable: true }, async lock => {
+      if (lock) await createEngine({ api: dbx.api, storage: store, key: CAPTURE_KEY }).flush();
+    });
+  } catch (e) { console.error(e); }   // tried again on the next sync
+}
+// Settings → Add from any page: the bookmarklet
+function captureSettings() {
+  const code = bookmarklet(location.href, DEMO);
+  return h('section', { class: 'sec' }, h('h2', { text: 'Add from any page' }),
+    h('p', { class: 'note', text: 'In Chrome on a computer: drag this link to the bookmarks bar. Then select text on any page and click it: a small WordDrill window opens with the text, to put it into a queue (soon or at the end).' }),
+    h('div', { class: 'row' },
+      h('a', { class: 'bookmarklet', href: code, title: 'Drag me to the bookmarks bar', onclick: ev => { ev.preventDefault(); toast('Drag this link to the bookmarks bar.'); } }, '+ WordDrill'),
+      btn('Copy the code', () => copyText(code).then(ok => toast(ok ? 'Copied. Paste it as the address (URL) of a new bookmark.' : 'Couldn’t copy.')), 'link')),
+    h('p', { class: 'note', text: 'Not in Chrome’s PDF viewer or on chrome:// pages.' }));
+}
 // Today → Add to a queue: the area key picked
-let editing = store.get('wd.draft');        // { path, section, id|null, index?, text } — survives reloads
+let editing = store.get(DRAFT_KEY);         // { path, section, id|null, index?, text } — survives reloads
 let menuFor = null;                         // card id whose extra actions are shown
 let renderPending = false;
 let showLater = false;
@@ -135,6 +220,7 @@ function toast(msg, opts = {}) {
 }
 const OFFLINE = 'Offline — changes are kept on this device';
 function updateStatus(text) {
+  if (!engine) return;   // a capture window still waiting for its engine
   const n = engine.pending();
   $('#sync').textContent = text || (!navigator.onLine ? OFFLINE : n ? plural(n, 'change') + ' to save' : 'Synced');
 }
@@ -150,16 +236,19 @@ function handleErr(e) {
 let flushTimer;
 function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 600); }
 async function flush() {
+  if (!engine) return;
   if (!dbx.connected() || !engine.pending()) return updateStatus();
   if (!navigator.onLine) return updateStatus();
   updateStatus('Saving…');
   try { await engine.flush(); updateStatus(); } catch (e) { handleErr(e); }
 }
 async function sync() {
-  if (!dbx.connected()) return;
+  if (!engine || !dbx.connected()) return;
   if (!navigator.onLine) return updateStatus();
   updateStatus('Syncing…');
   try {
+    if (CAPTURE) { await engine.sync([STATE]); updateStatus(); return; }
+    await flushCaptureLeftovers();
     const changed = await engine.sync(CORE);
     if (changed.length) backgroundRender();
     updateStatus();
@@ -170,6 +259,7 @@ function commit(ops, message, undo) {
   [ops].flat().forEach(op => engine.add(op));
   animateNext = true;
   render();
+  if (CAPTURE) { captureSave(message); return; }
   scheduleFlush();
   if (message) toast(message, undo && [undo].flat().length ? { undo: () => commit(undo) } : {});
 }
@@ -203,7 +293,7 @@ function playMoves(before) {
 }
 
 /* ============ Editing ============ */
-function saveDraft() { if (editing) store.set('wd.draft', editing); else store.del('wd.draft'); }
+function saveDraft() { if (editing) store.set(DRAFT_KEY, editing); else store.del(DRAFT_KEY); }
 function startEdit(path, section, card, index) {
   if (editing) {
     if (editing.id === (card && card.id) && editing.path === path) return;
@@ -228,7 +318,7 @@ function saveEdit() {
   if (!e.id) {
     closeEditor();
     if (isQueueFile(e.path)) {
-      commit(queueAddOp({ path: e.path, index: e.index }, text, today()), 'Added to the queue: file ' + queueNumber(e.path) + ', card ' + ((e.index || 0) + 1) + '.');
+      commit(queueAddOp({ path: e.path, index: e.index }, text, today()), 'Added to the ' + queueName(e.path) + ': file ' + queueNumber(e.path) + ', card ' + ((e.index || 0) + 1) + '.');
     } else commit(addOp(e.path, e.section, text, today()));
     return;
   }
@@ -244,6 +334,7 @@ function saveEdit() {
 // leaving the app. Save stays as a button. An empty card is not saved (Delete removes cards).
 function autoSave() {
   if (!editing) return;
+  if (CAPTURE) { saveDraft(); return; }
   if (!normalizeBody(editing.text)) {
     const id = editing.id;
     closeEditor();
@@ -329,7 +420,7 @@ function splitAllEdit(mode) {
     closeEditor();
     const date = today(), queue = isQueueFile(e.path);
     const ops = parts.map((body, j) => queue ? queueAddOp({ path: e.path, index: (e.index || 0) + j }, body, date) : addOp(e.path, e.section, body, date));
-    commit(ops, 'Added ' + parts.length + ' cards' + (queue ? ' to the queue: file ' + queueNumber(e.path) + (e.index < 1e9 ? ', from card ' + ((e.index || 0) + 1) : '') : '') + '.',
+    commit(ops, 'Added ' + parts.length + ' cards' + (queue ? ' to the ' + queueName(e.path) + ': file ' + queueNumber(e.path) + (e.index < 1e9 ? ', from card ' + ((e.index || 0) + 1) : '') : '') + '.',
       ops.map(o => deleteOp(o.path, o.card.id)));
     return;
   }
@@ -366,6 +457,7 @@ function cancelEdit() {
   const original = e.id ? (f ? f.card.body : '') : '';
   if (normalizeBody(e.text) !== normalizeBody(original) && !confirm('Discard your changes to this card?')) return;
   closeEditor();
+  if (CAPTURE) window.close();
 }
 const editorFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea');
 const typingFocused = () => !!document.activeElement && document.activeElement.matches('.editor textarea, .typed textarea, textarea.prompt, input.area-name');
@@ -411,7 +503,7 @@ function renderList(path) {
   const targets = targetsOf(engine.state());
   const dateLine = () => h('p', { class: 'date', text: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) });
   if (isToday && !listShown('today')) {
-    const counts = sectionsOf(doc).filter(sec => sec.cards.length || targets[sec.name]).map(sec => sec.name + ' ' + sec.cards.length).join(' · ');
+    const counts = sectionsOf(doc).filter(sec => sec.cards.length || targets[sec.name]).map(sec => sec.name + ' ' + sec.cards.length + covers(sec.name, targets)).join(' · ');
     return [dateLine(), recallPanel('today', 'today’s cards'),
       h('p', { class: 'note hidden-list', text: 'Today’s cards are hidden: ' + (counts || 'none') + '.' }),
       reminder(date), preparedReminder(), quickQueue()];
@@ -470,13 +562,20 @@ function renderList(path) {
     const adding = editing && editing.path === path && !editing.id && editing.section === sec.name;
     const low = !isToday && target > 0 && sec.cards.length < target;
     out.push(h('section', { class: 'sec' },
-      isToday ? h('h2', {}, sec.name, h('span', { class: 'count', text: sec.cards.length + ' / ' + target }))
+      isToday ? h('h2', {}, sec.name, h('span', { class: 'count', text: sec.cards.length + ' / ' + target }), coverView(sec.name, target))
         : low ? h('p', { class: 'low', text: (sec.cards.length ? 'Less than a day’s ' + target + ': not enough for tomorrow.' : 'Empty: nothing for tomorrow.') }) : null,
       cards,
       adding ? renderEditor() : btn('+ Add', () => startEdit(path, sec.name, null), 'add')));
   }
   if (isToday) out.push(reminder(date), preparedReminder(), quickQueue());
   return out;
+}
+// How many days Preparation lasts for an area (P prepared / T a day), shown on Today: "(2.5 days, 250%)"
+const preparedCount = name => (sectionsOf(engine.doc(PREPARED)).find(s => s.name === name) || { cards: [] }).cards.length;
+const covers = (name, targets) => { const c = coverage(preparedCount(name), targets[name]); return c ? ' ' + coverageText(c) : ''; };
+function coverView(name, target) {
+  const c = coverage(preparedCount(name), target);
+  return c ? h('span', { class: 'cover' + (c.days < 1 ? ' low' : ''), title: 'Preparation lasts ' + c.days + (c.days === 1 ? ' day' : ' days') + ' at ' + target + ' a day', text: coverageText(c) }) : null;
 }
 /* ============ Recall ============ */
 // k: 'today' (the only Recall list now)
@@ -917,6 +1016,7 @@ function renderSettings() {
   return [
     areasSettings(),
     queueSettingsView(),
+    captureSettings(),
     timerSettingsView(),
     promptSettings(),
     h('section', { class: 'sec' }, h('h2', { text: 'Dropbox' }),
@@ -1044,6 +1144,7 @@ function render() {
   const animate = animateNext && !reducedMotion();
   animateNext = false;
   const before = animate ? cardRects() : null;
+  if (CAPTURE) { if (!engine) return; $('#view').replaceChildren(...captureView().filter(Boolean)); return; }
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   const view = { today: () => renderList(CURRENT), prepared: () => renderList(PREPARED), check: renderCheck, archive: renderArchive, settings: renderSettings }[tab] || (() => renderList(CURRENT));
   $('#view').replaceChildren(...[view()].flat().filter(Boolean));
@@ -1063,7 +1164,7 @@ function render() {
 
 /* ============ Start ============ */
 function wire() {
-  timer = mountTimer({ button: $('#timerBtn'), panel: $('#timerPanel'), store, settings: () => timerSettings(engine.state()) });
+  if (!CAPTURE) timer = mountTimer({ button: $('#timerBtn'), panel: $('#timerPanel'), store, settings: () => timerSettings(engine.state()) });
   // Settings → Timer → Change: the next key combination becomes the shortcut (before any other key handling)
   window.addEventListener('keydown', ev => {
     if (!recordingShortcut) return;
@@ -1079,7 +1180,7 @@ function wire() {
   }, true);
   // Copy for AI check from the keyboard: Today's lists, from any tab
   document.addEventListener('keydown', ev => {
-    if (!matchesShortcut(ev, copyShortcutOf(engine.state()))) return;
+    if (CAPTURE || !matchesShortcut(ev, copyShortcutOf(engine.state()))) return;
     ev.preventDefault();
     copyCheck('today');
   });
@@ -1124,5 +1225,6 @@ function start() {
     try { await dbx.exchange(code); } catch (e) { toast(e.message, { error: true }); }
     history.replaceState(null, '', REDIRECT_URI);
   }
+  if (CAPTURE) { startCapture(); return; }
   if (dbx.connected()) start(); else show('login');
 })();
