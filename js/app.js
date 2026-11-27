@@ -20,7 +20,7 @@ import { timerSettings, clampTotal, shortcutOf, shortcutLabel, matchesShortcut, 
 import { DEFAULT_CHECK_PROMPT, promptOf, recallFor, typedTexts, buildCheckText, copyShortcutOf, DEFAULT_COPY_SHORTCUT, checkTypedFor } from './recall.js';
 import { toDom, plainText, toggleWrap, toggleLinePrefix, toggleFence, firstLine, insertTable, insertRule } from './markdown.js';
 
-const APP_VERSION = '35';   // shown in Settings; keep in step with CACHE in sw.js
+const APP_VERSION = '36';   // shown in Settings; keep in step with CACHE in sw.js
 const CORE = [CURRENT, PREPARED, STATE, ...WEEK_FILES];
 const $ = s => document.querySelector(s);
 
@@ -707,6 +707,7 @@ const manyHint = () => h('p', { class: 'note', text: 'One card: type and Save. S
 const queueName = p => { const a = sectionsList(engine.state()).find(x => x.key === p.split('/')[1]); return (a ? a.name + ' ' : '') + 'queue'; };
 /* ============ Capture window ============ */
 let captureCut = false, captureReady = false, captureDone = null, captureSoon = true;
+let captureEmpty = false;   // opened by the bookmarklet, but no selected text came with it
 const CAPTURE_TEXT = 'wd.captureText';   // text that came in while not signed in, kept for the next time
 // Saves at once. When everything is in Dropbox: the bookmarklet's window closes; a page opened by the iPhone
 // Shortcut (Safari can't close it) says it is saved and offers another note.
@@ -715,6 +716,7 @@ async function captureSave(message) {
   try { await engine.flush(); } catch (e) { handleErr(e); }
   updateStatus();
   if (engine.pending()) { render(); return; }   // the view offers Try again
+  captureEmpty = false;
   if (APP_MODE) { toast(message || 'Saved.'); newCaptureNote('', captureSoon); return; }   // WD Add: the next note
   captureDone = message || 'Saved.';
   render();
@@ -733,6 +735,7 @@ async function newCaptureNote(text, soon = true) {
 function captureView() {
   const out = [];
   if (captureCut) out.push(h('p', { class: 'low', text: 'The selection was very long, so only its start is here.' }));
+  if (captureEmpty && editing && !normalizeBody(editing.text)) out.push(h('p', { class: 'low', text: 'No selected text reached WordDrill: it may be in a part of the page that can’t be read (a frame from another site). Copy it (Ctrl+C), then tap 📋 Paste.' }));
   if (engine.pending()) out.push(h('div', { class: 'reminder' },
     h('span', { text: 'Not saved to Dropbox yet (' + plural(engine.pending(), 'change') + '). It is kept here until it is.' }),
     btn('Try again', () => captureSave(), 'primary')));
@@ -775,6 +778,8 @@ async function startCapture() {
   render();
   await sync();   // the areas and queue settings (and saves what an earlier window left)
   captureReady = true;
+  // opened by the bookmarklet with nothing selected (and nothing kept): the view says why
+  captureEmpty = !!got && !got.text && !incoming && !(editing && !editing.id && normalizeBody(editing.text || ''));
   // a note left open by an earlier window keeps its text; the new selection goes after it
   if (editing && !editing.id && isQueueFile(editing.path)) {
     if (incoming) editing = { ...editing, text: joinCapture(editing.text, incoming) };
@@ -798,9 +803,9 @@ function captureSettings() {
   const computer = [h('h3', { text: 'Computer (Chrome)' }),
     h('p', { class: 'note', text: 'Drag this link to the bookmarks bar. Then select text on any page and click it: a small WordDrill window opens with the text, to put it into a queue (soon or at the end).' }),
     h('div', { class: 'row' },
-      h('a', { class: 'bookmarklet', href: code, title: 'Drag me to the bookmarks bar', onclick: ev => { ev.preventDefault(); toast('Drag this link to the bookmarks bar.'); } }, '+ WordDrill'),
+      h('a', { class: 'bookmarklet', href: code, title: 'Drag me to the bookmarks bar', onclick: ev => { ev.preventDefault(); toast('Drag this link to the bookmarks bar.'); } }, '📇 + WordDrill'),
       btn('Copy the code', () => copyText(code).then(ok => toast(ok ? 'Copied. Paste it as the address (URL) of a new bookmark.' : 'Couldn’t copy.')), 'link')),
-    h('p', { class: 'note', text: 'Not in Chrome’s PDF viewer or on chrome:// pages.' })];
+    h('p', { class: 'note', text: 'Updated in v36: it also finds text selected inside frames of the same site (course players). If yours is older, delete it from the bookmarks bar and drag this one again. A bookmarklet can’t have a real icon in Chrome; the 📇 in its name stands in for one. Not in Chrome’s PDF viewer, on chrome:// pages or in frames from other sites (there: Ctrl+C, then 📋 Paste).' })];
   const step = (...kids) => h('li', {}, ...kids);
   const b = t => h('b', { text: t });
   const addApp = new URL('add.html', location.href.split(/[?#]/)[0]).href + (DEMO ? '?demo' : '');

@@ -26,13 +26,19 @@ export function captureMode(search) {
  * Shortcut appends the URL-encoded text to it. */
 export const captureUrl = (appUrl, demo) => appUrl.split(/[?#]/)[0] + (demo ? '?demo&' : '?') + CAPTURE_PARAM + '=';
 
-/** The bookmarklet for the app at appUrl */
+/**
+ * The bookmarklet for the app at appUrl. It sends the selected part of a text box, else the page's selection;
+ * when that is empty it looks inside the page's frames, nested too (course players such as SCORM show the
+ * lesson in an iframe, whose selection the top page doesn't see). A frame from another site can't be read by
+ * any page script, so it is skipped (try/catch).
+ */
 export function bookmarklet(appUrl, demo) {
   const target = captureUrl(appUrl, demo);
-  // the selection, or the selected part of a text box (getSelection doesn't see inside those)
-  return 'javascript:(()=>{const a=document.activeElement;' +
-    'const s=a&&/^(TEXTAREA|INPUT)$/.test(a.tagName)&&a.selectionEnd>a.selectionStart?a.value.slice(a.selectionStart,a.selectionEnd):String(getSelection());' +
-    'window.open(' + JSON.stringify(target) + '+encodeURIComponent(s),"worddrill-add","popup,width=480,height=720")})()';
+  return 'javascript:(()=>{const f=w=>{try{const a=w.document.activeElement;' +
+    'if(a&&/^(TEXTAREA|INPUT)$/.test(a.tagName)&&a.selectionEnd>a.selectionStart)return a.value.slice(a.selectionStart,a.selectionEnd);' +
+    'const s=String(w.getSelection());if(s)return s;' +
+    'for(let i=0;i<w.frames.length;i++){const t=f(w.frames[i]);if(t)return t}}catch(e){}return""};' +
+    'window.open(' + JSON.stringify(target) + '+encodeURIComponent(f(window)),"worddrill-add","popup,width=480,height=720")})()';
 }
 
 /** Text that arrives while an unsaved capture is still open: both are kept, with a ― line between */

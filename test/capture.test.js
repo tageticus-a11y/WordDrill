@@ -27,13 +27,36 @@ test('the bookmarklet opens the app with the selection, and is a valid script', 
   assert.ok(bookmarklet('http://localhost:8000/', true).includes('"http://localhost:8000/?demo&add="'));
   // runs: the selection goes into the address of the window it opens
   let opened;
-  const run = new Function('getSelection', 'window', 'document', b.slice('javascript:'.length));
-  run(() => 'բառ & word', { open: (url, name) => { opened = [url, name]; } }, { activeElement: null });
+  const run = top => {
+    opened = null;
+    new Function('window', b.slice('javascript:'.length))({ ...top, open: (url, name) => { opened = [url, name]; } });
+    return captureText(new URL(opened[0]).search).text;
+  };
+  // a fake window: its selection, the focused element, its frames
+  const win = (sel, frames = [], active = null) => ({ document: { activeElement: active }, getSelection: () => sel, frames });
+  assert.equal(run(win('բառ & word')), 'բառ & word');
   assert.equal(opened[1], 'worddrill-add');
-  assert.deepEqual(captureText(new URL(opened[0]).search), { text: 'բառ & word', cut: false });
   // text selected inside a text box
-  run(() => '', { open: url => { opened = [url]; } }, { activeElement: { tagName: 'TEXTAREA', value: 'abcdef', selectionStart: 1, selectionEnd: 4 } });
-  assert.equal(captureText(new URL(opened[0]).search).text, 'bcd');
+  assert.equal(run(win('', [], { tagName: 'TEXTAREA', value: 'abcdef', selectionStart: 1, selectionEnd: 4 })), 'bcd');
+});
+
+test('the bookmarklet finds a selection inside frames (course players), skipping frames of other sites', () => {
+  const b = bookmarklet('https://example.org/WordDrill/');
+  let opened;
+  const run = top => {
+    new Function('window', b.slice('javascript:'.length))({ ...top, open: url => { opened = url; } });
+    return captureText(new URL(opened).search).text;
+  };
+  const win = (sel, frames = [], active = null) => ({ document: { activeElement: active }, getSelection: () => sel, frames });
+  // another site's frame: every access throws
+  const foreign = { get document() { throw new Error('SecurityError'); }, getSelection() { throw new Error('SecurityError'); }, frames: [] };
+  const iframe = { tagName: 'IFRAME' };
+  assert.equal(run(win('', [win('frame text')], iframe)), 'frame text');
+  assert.equal(run(win('', [win('', [win('nested text')])], iframe)), 'nested text');
+  assert.equal(run(win('', [foreign, win('after the foreign one')])), 'after the foreign one');
+  assert.equal(run(win('', [foreign])), '');
+  assert.equal(run(win('top wins', [win('frame text')])), 'top wins');
+  assert.equal(run(win('', [win('', [], { tagName: 'INPUT', value: 'in a box', selectionStart: 3, selectionEnd: 8 })])), 'a box');
 });
 
 test('text arriving while an unsaved capture is open is added after a ― line, so both are kept', () => {
